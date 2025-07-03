@@ -1,0 +1,25 @@
+parts:
+  - /mnt/backups/disk_1
+  - /mnt/backups/disk_2
+  
+policy:
+  daily_retention: 3
+  weekly_retention: 2
+  monthly_retention: 3
+  
+backups:
+  postgresql: true
+  paths:
+    - path: /home/user/photos
+    - name: service_1
+      systemd: service_1
+      path: /var/lib/service_1
+    - name: service_2
+      systemd: service_2
+      path: /var/lib/service_2
+  etc: true
+  docker: true
+  certificates: false
+
+notifications: true
+  
