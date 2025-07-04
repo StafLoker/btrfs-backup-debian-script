@@ -6,7 +6,7 @@ This script allows to make backup of your sistem
 ## **Install & Upgrade**
 
 ```bash
-bash <(curl -Ls "https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main/install.sh")
+sudo bash <(curl -Ls "https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main/install.sh")
 ```
 
 ## **Security Notes**
