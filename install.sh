@@ -429,7 +429,7 @@ download_scripts() {
     # Download main script
     local repo_url="https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main"
     
-    curl -Ls "$repo_url/backup.sh" -o "$INSTALL_DIR/$SCRIPT_NAME"
+    curl -Ls "$repo_url/btrfs-backup-debian-script.sh" -o "$INSTALL_DIR/$SCRIPT_NAME"
     curl -Ls "$repo_url/README.md" -o "$INSTALL_DIR/README.md"
     curl -Ls "$repo_url/LICENSE" -o "$INSTALL_DIR/LICENSE"
     
