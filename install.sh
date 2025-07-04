@@ -70,8 +70,9 @@ main() {
     10a: Si no tiene confgirado notificaiones por Telegram
         10a.1 Preguntarla y escrbirla en fichero de configuracion
         10a.2 Si es positivo, preguntar sobre bot key
-        10b.3 Crear fichero .env con bot key
+        10b.3 Crear fichero .env con bot key de Telegram
     11. Una vez pasado mostrar el resultado de confg.yaml
+    11a. Clonar el README, LICENSE y el main script de repo de ultimo realize en carpeta /opt
     12. Logs de backup script
         12.1 Crear fichero para logs backup_<hostname>.log
         12.2 Crear fichero de logrotate
