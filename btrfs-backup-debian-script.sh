@@ -388,31 +388,143 @@ backup_docker() {
         # Backup Docker daemon configuration
         if [[ -f "/etc/docker/daemon.json" ]]; then
             cp /etc/docker/daemon.json "$docker_temp_dir/"
+            log "INFO" "Backed up Docker daemon configuration"
         fi
         
-        # Backup Docker Compose files (common locations)
-        local compose_dirs=("/opt" "/home" "/var/lib/docker/compose" "/etc/docker/compose")
-        
-        for dir in "${compose_dirs[@]}"; do
-            if [[ -d "$dir" ]]; then
-                find "$dir" -name "docker-compose.yml" -o -name "docker-compose.yaml" 2>/dev/null | while read -r file; do
-                    local relative_path="${file#/}"
-                    local dest_dir="$docker_temp_dir/compose/$(dirname "$relative_path")"
-                    mkdir -p "$dest_dir"
-                    cp "$file" "$dest_dir/"
-                    log "INFO" "Found and backed up: $file"
+        # Backup Docker Compose projects in /opt
+        if [[ -d "/opt" ]]; then
+            log "INFO" "Searching for Docker Compose projects in /opt..."
+            
+            find /opt -name "docker-compose.yml" -o -name "docker-compose.yaml" 2>/dev/null | while read -r compose_file; do
+                local project_dir=$(dirname "$compose_file")
+                local relative_path="${project_dir#/}"
+                local dest_dir="$docker_temp_dir/compose/$relative_path"
+                
+                log "INFO" "Found Docker Compose project: $project_dir"
+                mkdir -p "$dest_dir"
+                
+                # Copy docker-compose files
+                cp "$compose_file" "$dest_dir/" 2>/dev/null && {
+                    log "INFO" "Backed up: $compose_file"
+                }
+                
+                # Copy .env files if they exist
+                if [[ -f "$project_dir/.env" ]]; then
+                    cp "$project_dir/.env" "$dest_dir/" 2>/dev/null && {
+                        log "INFO" "Backed up .env file: $project_dir/.env"
+                    }
+                fi
+                
+                # Copy additional .env.* files (like .env.prod, .env.local, etc.)
+                find "$project_dir" -maxdepth 1 -name ".env.*" 2>/dev/null | while read -r env_file; do
+                    cp "$env_file" "$dest_dir/" 2>/dev/null && {
+                        log "INFO" "Backed up environment file: $env_file"
+                    }
                 done
-            fi
-        done
+                
+                # Check for named volumes and backup their mount points
+                if command -v yq &>/dev/null; then
+                    # Extract volume information from docker-compose file
+                    local volumes_info="$dest_dir/volumes_info.txt"
+                    echo "# Volume mount information for $project_dir" > "$volumes_info"
+                    echo "# Generated on $(date)" >> "$volumes_info"
+                    echo "" >> "$volumes_info"
+                    
+                    # Parse volumes from docker-compose file
+                    yq eval '.services.*.volumes[]? | select(. | contains(":"))' "$compose_file" 2>/dev/null | while read -r volume; do
+                        # Check if it's a named volume or bind mount
+                        if [[ "$volume" =~ ^[^/].+:.+ ]]; then
+                            # Named volume format: volume_name:/container/path
+                            local volume_name=$(echo "$volume" | cut -d':' -f1)
+                            local container_path=$(echo "$volume" | cut -d':' -f2)
+                            
+                            # Get actual mount point of named volume
+                            local mount_point=$(docker volume inspect "$volume_name" --format '{{.Mountpoint}}' 2>/dev/null)
+                            if [[ -n "$mount_point" ]] && [[ -d "$mount_point" ]]; then
+                                echo "Named Volume: $volume_name" >> "$volumes_info"
+                                echo "  Container Path: $container_path" >> "$volumes_info"
+                                echo "  Host Mount Point: $mount_point" >> "$volumes_info"
+                                echo "" >> "$volumes_info"
+                                
+                                # Backup the actual volume data
+                                local volume_backup_dir="$dest_dir/volumes/$volume_name"
+                                mkdir -p "$volume_backup_dir"
+                                
+                                if rsync -av "$mount_point/" "$volume_backup_dir/" 2>/dev/null; then
+                                    log "INFO" "Backed up named volume data: $volume_name -> $mount_point"
+                                else
+                                    log "WARNING" "Failed to backup named volume: $volume_name"
+                                fi
+                            fi
+                        elif [[ "$volume" =~ ^/.+:.+ ]]; then
+                            # Bind mount format: /host/path:/container/path
+                            local host_path=$(echo "$volume" | cut -d':' -f1)
+                            local container_path=$(echo "$volume" | cut -d':' -f2)
+                            
+                            echo "Bind Mount: $host_path" >> "$volumes_info"
+                            echo "  Container Path: $container_path" >> "$volumes_info"
+                            echo "  Note: Bind mounts should be backed up separately if needed" >> "$volumes_info"
+                            echo "" >> "$volumes_info"
+                        fi
+                    done
+                    
+                    # Also list defined volumes section
+                    yq eval '.volumes | keys | .[]' "$compose_file" 2>/dev/null | while read -r defined_volume; do
+                        echo "Defined Volume: $defined_volume" >> "$volumes_info"
+                        local mount_point=$(docker volume inspect "${project_dir##*/}_$defined_volume" --format '{{.Mountpoint}}' 2>/dev/null)
+                        if [[ -n "$mount_point" ]]; then
+                            echo "  Mount Point: $mount_point" >> "$volumes_info"
+                        fi
+                        echo "" >> "$volumes_info"
+                    done
+                fi
+                
+                # Copy any additional configuration files commonly found in Docker projects
+                for config_file in "Dockerfile" ".dockerignore" "docker-compose.override.yml" "docker-compose.override.yaml"; do
+                    if [[ -f "$project_dir/$config_file" ]]; then
+                        cp "$project_dir/$config_file" "$dest_dir/" 2>/dev/null && {
+                            log "INFO" "Backed up config file: $project_dir/$config_file"
+                        }
+                    fi
+                done
+            done
+        else
+            log "INFO" "/opt directory not found, skipping Docker Compose search"
+        fi
         
         # Export running containers list
-        docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" > "$docker_temp_dir/running_containers.txt" 2>/dev/null || {
+        docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" > "$docker_temp_dir/running_containers.txt" 2>/dev/null && {
+            log "INFO" "Exported running containers list"
+        } || {
             log "WARNING" "Failed to export running containers list"
         }
         
         # Export all containers list
-        docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" > "$docker_temp_dir/all_containers.txt" 2>/dev/null || {
+        docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" > "$docker_temp_dir/all_containers.txt" 2>/dev/null && {
+            log "INFO" "Exported all containers list"
+        } || {
             log "WARNING" "Failed to export all containers list"
+        }
+        
+        # Export Docker images list
+        docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}" > "$docker_temp_dir/images.txt" 2>/dev/null && {
+            log "INFO" "Exported Docker images list"
+        } || {
+            log "WARNING" "Failed to export Docker images list"
+        }
+        
+        # Export Docker networks list
+        docker network ls --format "table {{.Name}}\t{{.Driver}}\t{{.Scope}}" > "$docker_temp_dir/networks.txt" 2>/dev/null && {
+            log "INFO" "Exported Docker networks list"
+        } || {
+            log "WARNING" "Failed to export Docker networks list"
+        }
+        
+        # Export Docker volumes list
+        docker volume ls --format "table {{.Name}}\t{{.Driver}}" > "$docker_temp_dir/volumes.txt" 2>/dev/null && {
+            log "INFO" "Exported Docker volumes list"
+        } || {
+            log "WARNING" "Failed to export Docker volumes list"
         }
         
         copy_to_backup_disks "$docker_temp_dir" "docker"
