@@ -663,6 +663,34 @@ cleanup_old_snapshots() {
     done
 }
 
+# Function to get disk usage information
+get_disk_usage_info() {
+    local disk_info=""
+    local parts_count=$(yq eval '.parts | length' "$CONFIG_FILE")
+    
+    for ((i=0; i<parts_count; i++)); do
+        local label=$(yq eval ".parts[$i].label" "$CONFIG_FILE")
+        local path=$(yq eval ".parts[$i].path" "$CONFIG_FILE")
+        
+        if mountpoint -q "$path" 2>/dev/null; then
+            # Get disk usage in GB and percentage
+            local usage_info=$(df -h "$path" | awk 'NR==2 {print $3 "/" $2 " (" $5 " used)"}')
+            local free_percent=$(df "$path" | awk 'NR==2 {printf "%.1f", (100-($3/$2*100))}')
+            
+            if [[ -n "$disk_info" ]]; then
+                disk_info+="%0A"
+            fi
+            disk_info+="📁 $label: $usage_info, ${free_percent}% free"
+        else
+            if [[ -n "$disk_info" ]]; then
+                disk_info+="%0A"
+            fi
+            disk_info+="📁 $label: Not mounted"
+        fi
+    done
+    
+    echo "$disk_info"
+}
 # Function to send completion notification
 send_completion_notification() {
     if [[ "$NOTIFICATIONS_ENABLED" == "true" ]]; then
@@ -678,11 +706,17 @@ send_completion_notification() {
         fi
         
         local message="$status_icon *Backup $status_text on $HOSTNAME*%0A%0A"
-        message+="Time: $(date)%0A"
-        message+="Duration: $(date -d@$(($(date +%s) - START_TIME)) -u +%H:%M:%S)%0A"
+        message+="⏰ Time: $(date)%0A"
+        message+="⏱️ Duration: $(date -d@$(($(date +%s) - START_TIME)) -u +%H:%M:%S)%0A%0A"
+        
+        # Add disk usage information
+        local disk_usage=$(get_disk_usage_info)
+        if [[ -n "$disk_usage" ]]; then
+            message+="💾 *Disk Usage:*%0A$disk_usage%0A%0A"
+        fi
         
         if [[ ${#ERROR_MESSAGES[@]} -gt 0 ]]; then
-            message+="%0A*Errors:*%0A"
+            message+="🚨 *Errors:*%0A"
             for error in "${ERROR_MESSAGES[@]}"; do
                 message+="• $error%0A"
             done
@@ -690,6 +724,7 @@ send_completion_notification() {
         
         send_telegram_notification "$message"
     fi
+}
 }
 
 # Function to unmount backup partitions
