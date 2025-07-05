@@ -179,44 +179,50 @@ verify_directory_structure() {
 
 # Function to backup PostgreSQL databases
 backup_postgresql() {
-    local postgresql_enabled=$(yq eval '.backups.postgresql' "$CONFIG_FILE")
+    local pg_global=$(yq eval '.backups.postgresql.global // false' "$CONFIG_FILE")
+    local pg_all_db=$(yq eval '.backups.postgresql.all_db // false' "$CONFIG_FILE")
     
-    if [[ "$postgresql_enabled" == "true" ]]; then
+    if [[ "$pg_global" == "true" ]] || [[ "$pg_all_db" == "true" ]]; then
         log "INFO" "Starting PostgreSQL backup..."
+        
+        if ! command -v pg_dumpall &>/dev/null; then
+            log "WARNING" "pg_dumpall not found, skipping PostgreSQL backup"
+            return
+        fi
         
         # Create temp directory for PostgreSQL backups
         local pg_temp_dir="$TEMP_DIR/postgresql"
         mkdir -p "$pg_temp_dir"
         
-        # Backup global configurations
-        log "INFO" "Backing up PostgreSQL global configurations..."
-        if command -v pg_dumpall &>/dev/null; then
+        # Backup global configurations if enabled
+        if [[ "$pg_global" == "true" ]]; then
+            log "INFO" "Backing up PostgreSQL global configurations..."
             if sudo -u postgres pg_dumpall --globals-only > "$pg_temp_dir/globals_${TIMESTAMP}.sql"; then
                 log "INFO" "PostgreSQL globals backup completed"
             else
                 handle_error "Failed to backup PostgreSQL globals"
             fi
-        else
-            log "WARNING" "pg_dumpall not found, skipping PostgreSQL backup"
-            return
         fi
         
-        # Get list of databases
-        local databases
-        if databases=$(sudo -u postgres psql -t -c "SELECT datname FROM pg_database WHERE datistemplate = false;"); then
-            while IFS= read -r db; do
-                db=$(echo "$db" | xargs) # Trim whitespace
-                if [[ -n "$db" ]]; then
-                    log "INFO" "Backing up database: $db"
-                    if sudo -u postgres pg_dump "$db" > "$pg_temp_dir/${db}_${TIMESTAMP}.sql"; then
-                        log "INFO" "Database $db backup completed"
-                    else
-                        handle_error "Failed to backup database $db"
+        # Backup all databases if enabled
+        if [[ "$pg_all_db" == "true" ]]; then
+            log "INFO" "Backing up all PostgreSQL databases..."
+            local databases
+            if databases=$(sudo -u postgres psql -t -c "SELECT datname FROM pg_database WHERE datistemplate = false;"); then
+                while IFS= read -r db; do
+                    db=$(echo "$db" | xargs) # Trim whitespace
+                    if [[ -n "$db" ]]; then
+                        log "INFO" "Backing up database: $db"
+                        if sudo -u postgres pg_dump "$db" > "$pg_temp_dir/${db}_${TIMESTAMP}.sql"; then
+                            log "INFO" "Database $db backup completed"
+                        else
+                            handle_error "Failed to backup database $db"
+                        fi
                     fi
-                fi
-            done <<< "$databases"
-        else
-            handle_error "Failed to get database list"
+                done <<< "$databases"
+            else
+                handle_error "Failed to get database list"
+            fi
         fi
         
         # Copy PostgreSQL backups to each backup disk
@@ -265,24 +271,25 @@ EOF
     fi
 }
 
-# Function to backup configured paths
-backup_configured_paths() {
-    log "INFO" "Starting configured paths backup..."
+# Function to backup services
+backup_services() {
+    log "INFO" "Starting services backup..."
     
-    local paths_count=$(yq eval '.backups.paths | length' "$CONFIG_FILE")
+    local services_count=$(yq eval '.backups.services | length' "$CONFIG_FILE")
     
-    if [[ $paths_count -eq 0 ]]; then
-        log "INFO" "No paths configured for backup"
+    if [[ $services_count -eq 0 ]]; then
+        log "INFO" "No services configured for backup"
         return
     fi
     
     local stopped_services=()
     
-    # Stop services if configured
-    for ((i=0; i<paths_count; i++)); do
-        local systemd_service=$(yq eval ".backups.paths[$i].systemd // \"\"" "$CONFIG_FILE")
+    # Stop all services first
+    for ((i=0; i<services_count; i++)); do
+        local service_label=$(yq eval ".backups.services[$i].label" "$CONFIG_FILE")
+        local systemd_service=$(yq eval ".backups.services[$i].systemd" "$CONFIG_FILE")
         
-        if [[ -n "$systemd_service" ]]; then
+        if [[ -n "$systemd_service" ]] && [[ "$systemd_service" != "null" ]]; then
             log "INFO" "Stopping service: $systemd_service"
             if systemctl stop "$systemd_service"; then
                 stopped_services+=("$systemd_service")
@@ -293,29 +300,112 @@ backup_configured_paths() {
         fi
     done
     
-    # Backup each configured path
-    for ((i=0; i<paths_count; i++)); do
-        local backup_path=$(yq eval ".backups.paths[$i].path" "$CONFIG_FILE")
-        local label=$(yq eval ".backups.paths[$i].label // \"path_$i\"" "$CONFIG_FILE")
+    # Backup each service
+    for ((i=0; i<services_count; i++)); do
+        local service_label=$(yq eval ".backups.services[$i].label" "$CONFIG_FILE")
+        local docker_compose=$(yq eval ".backups.services[$i].docker_compsose // \"\"" "$CONFIG_FILE")
+        local config_path=$(yq eval ".backups.services[$i].config // \"\"" "$CONFIG_FILE")
+        local data_files=$(yq eval ".backups.services[$i].data.files // \"\"" "$CONFIG_FILE")
+        local data_pg_db=$(yq eval ".backups.services[$i].data.pg-db // \"\"" "$CONFIG_FILE")
+        local logs_path=$(yq eval ".backups.services[$i].logs // \"\"" "$CONFIG_FILE")
         
-        if [[ -d "$backup_path" ]]; then
-            log "INFO" "Backing up path: $backup_path (label: $label)"
+        log "INFO" "Backing up service: $service_label"
+        
+        local service_temp_dir="$TEMP_DIR/services/$service_label"
+        mkdir -p "$service_temp_dir"
+        
+        # Backup Docker Compose if specified
+        if [[ -n "$docker_compose" ]] && [[ "$docker_compose" != "null" ]] && [[ -d "$docker_compose" ]]; then
+            log "INFO" "Backing up Docker Compose for $service_label: $docker_compose"
+            local compose_backup_dir="$service_temp_dir/docker_compose"
+            mkdir -p "$compose_backup_dir"
             
-            local path_temp_dir="$TEMP_DIR/paths/$label"
-            mkdir -p "$path_temp_dir"
+            # Copy docker-compose files
+            find "$docker_compose" -maxdepth 1 \( -name "docker-compose.yml" -o -name "docker-compose.yaml" \) -exec cp {} "$compose_backup_dir/" \; 2>/dev/null
             
-            if rsync -av "$backup_path/" "$path_temp_dir/"; then
-                log "INFO" "Path $backup_path backup completed"
-                copy_to_backup_disks "$path_temp_dir" "paths/$label"
-            else
-                handle_error "Failed to backup path $backup_path"
-            fi
-        else
-            log "WARNING" "Path $backup_path does not exist, skipping"
+            # Copy .env files
+            find "$docker_compose" -maxdepth 1 -name ".env*" -exec cp {} "$compose_backup_dir/" \; 2>/dev/null
+            
+            # Copy additional config files
+            for config_file in "Dockerfile" ".dockerignore" "docker-compose.override.yml" "docker-compose.override.yaml"; do
+                if [[ -f "$docker_compose/$config_file" ]]; then
+                    cp "$docker_compose/$config_file" "$compose_backup_dir/" 2>/dev/null
+                fi
+            done
+            
+            log "INFO" "Docker Compose backup completed for $service_label"
         fi
+        
+        # Backup configuration if specified and not excluded by /etc backup
+        if [[ -n "$config_path" ]] && [[ "$config_path" != "null" ]] && [[ -d "$config_path" ]]; then
+            local etc_enabled=$(yq eval '.backups.etc // false' "$CONFIG_FILE")
+            
+            # Skip if /etc backup is enabled and config path starts with /etc/
+            if [[ "$etc_enabled" == "true" ]] && [[ "$config_path" =~ ^/etc/ ]]; then
+                log "INFO" "Skipping config backup for $service_label (covered by /etc backup): $config_path"
+            else
+                log "INFO" "Backing up configuration for $service_label: $config_path"
+                local config_backup_dir="$service_temp_dir/config"
+                mkdir -p "$config_backup_dir"
+                
+                if rsync -av "$config_path/" "$config_backup_dir/"; then
+                    log "INFO" "Configuration backup completed for $service_label"
+                else
+                    handle_error "Failed to backup configuration for $service_label: $config_path"
+                fi
+            fi
+        fi
+        
+        # Backup data files if specified
+        if [[ -n "$data_files" ]] && [[ "$data_files" != "null" ]] && [[ -d "$data_files" ]]; then
+            log "INFO" "Backing up data files for $service_label: $data_files"
+            local data_backup_dir="$service_temp_dir/data_files"
+            mkdir -p "$data_backup_dir"
+            
+            if rsync -av "$data_files/" "$data_backup_dir/"; then
+                log "INFO" "Data files backup completed for $service_label"
+            else
+                handle_error "Failed to backup data files for $service_label: $data_files"
+            fi
+        fi
+        
+        # Backup PostgreSQL database if specified
+        if [[ -n "$data_pg_db" ]] && [[ "$data_pg_db" != "null" ]]; then
+            log "INFO" "Backing up PostgreSQL database for $service_label: $data_pg_db"
+            local db_backup_dir="$service_temp_dir/database"
+            mkdir -p "$db_backup_dir"
+            
+            if command -v pg_dump &>/dev/null; then
+                if sudo -u postgres pg_dump "$data_pg_db" > "$db_backup_dir/${data_pg_db}_${TIMESTAMP}.sql"; then
+                    log "INFO" "PostgreSQL database backup completed for $service_label: $data_pg_db"
+                else
+                    handle_error "Failed to backup PostgreSQL database for $service_label: $data_pg_db"
+                fi
+            else
+                log "WARNING" "pg_dump not found, skipping database backup for $service_label"
+            fi
+        fi
+        
+        # Backup logs if specified
+        if [[ -n "$logs_path" ]] && [[ "$logs_path" != "null" ]] && [[ -d "$logs_path" ]]; then
+            log "INFO" "Backing up logs for $service_label: $logs_path"
+            local logs_backup_dir="$service_temp_dir/logs"
+            mkdir -p "$logs_backup_dir"
+            
+            if rsync -av "$logs_path/" "$logs_backup_dir/"; then
+                log "INFO" "Logs backup completed for $service_label"
+            else
+                handle_error "Failed to backup logs for $service_label: $logs_path"
+            fi
+        fi
+        
+        # Copy service backup to all backup disks
+        copy_to_backup_disks "$service_temp_dir" "services/$service_label"
+        
+        log "INFO" "Service backup completed: $service_label"
     done
     
-    # Restart stopped services
+    # Restart all stopped services
     for service in "${stopped_services[@]}"; do
         log "INFO" "Starting service: $service"
         if systemctl start "$service"; then
@@ -325,7 +415,7 @@ backup_configured_paths() {
         fi
     done
     
-    log "INFO" "Configured paths backup completed"
+    log "INFO" "Services backup completed"
 }
 
 # Function to backup certificates
@@ -370,169 +460,40 @@ backup_certificates() {
     fi
 }
 
-# Function to backup Docker configurations
-backup_docker() {
-    local docker_enabled=$(yq eval '.backups.docker' "$CONFIG_FILE")
+# Function to backup configured paths
+backup_configured_paths() {
+    log "INFO" "Starting configured paths backup..."
     
-    if [[ "$docker_enabled" == "true" ]]; then
-        log "INFO" "Starting Docker backup..."
-        
-        if ! command -v docker &>/dev/null; then
-            log "WARNING" "Docker not found, skipping Docker backup"
-            return
-        fi
-        
-        local docker_temp_dir="$TEMP_DIR/docker"
-        mkdir -p "$docker_temp_dir"
-        
-        # Backup Docker daemon configuration
-        if [[ -f "/etc/docker/daemon.json" ]]; then
-            cp /etc/docker/daemon.json "$docker_temp_dir/"
-            log "INFO" "Backed up Docker daemon configuration"
-        fi
-        
-        # Backup Docker Compose projects in /opt
-        if [[ -d "/opt" ]]; then
-            log "INFO" "Searching for Docker Compose projects in /opt..."
-            
-            find /opt -name "docker-compose.yml" -o -name "docker-compose.yaml" 2>/dev/null | while read -r compose_file; do
-                local project_dir=$(dirname "$compose_file")
-                local relative_path="${project_dir#/}"
-                local dest_dir="$docker_temp_dir/compose/$relative_path"
-                
-                log "INFO" "Found Docker Compose project: $project_dir"
-                mkdir -p "$dest_dir"
-                
-                # Copy docker-compose files
-                cp "$compose_file" "$dest_dir/" 2>/dev/null && {
-                    log "INFO" "Backed up: $compose_file"
-                }
-                
-                # Copy .env files if they exist
-                if [[ -f "$project_dir/.env" ]]; then
-                    cp "$project_dir/.env" "$dest_dir/" 2>/dev/null && {
-                        log "INFO" "Backed up .env file: $project_dir/.env"
-                    }
-                fi
-                
-                # Copy additional .env.* files (like .env.prod, .env.local, etc.)
-                find "$project_dir" -maxdepth 1 -name ".env.*" 2>/dev/null | while read -r env_file; do
-                    cp "$env_file" "$dest_dir/" 2>/dev/null && {
-                        log "INFO" "Backed up environment file: $env_file"
-                    }
-                done
-                
-                # Check for named volumes and backup their mount points
-                if command -v yq &>/dev/null; then
-                    # Extract volume information from docker-compose file
-                    local volumes_info="$dest_dir/volumes_info.txt"
-                    echo "# Volume mount information for $project_dir" > "$volumes_info"
-                    echo "# Generated on $(date)" >> "$volumes_info"
-                    echo "" >> "$volumes_info"
-                    
-                    # Parse volumes from docker-compose file
-                    yq eval '.services.*.volumes[]? | select(. | contains(":"))' "$compose_file" 2>/dev/null | while read -r volume; do
-                        # Check if it's a named volume or bind mount
-                        if [[ "$volume" =~ ^[^/].+:.+ ]]; then
-                            # Named volume format: volume_name:/container/path
-                            local volume_name=$(echo "$volume" | cut -d':' -f1)
-                            local container_path=$(echo "$volume" | cut -d':' -f2)
-                            
-                            # Get actual mount point of named volume
-                            local mount_point=$(docker volume inspect "$volume_name" --format '{{.Mountpoint}}' 2>/dev/null)
-                            if [[ -n "$mount_point" ]] && [[ -d "$mount_point" ]]; then
-                                echo "Named Volume: $volume_name" >> "$volumes_info"
-                                echo "  Container Path: $container_path" >> "$volumes_info"
-                                echo "  Host Mount Point: $mount_point" >> "$volumes_info"
-                                echo "" >> "$volumes_info"
-                                
-                                # Backup the actual volume data
-                                local volume_backup_dir="$dest_dir/volumes/$volume_name"
-                                mkdir -p "$volume_backup_dir"
-                                
-                                if rsync -av "$mount_point/" "$volume_backup_dir/" 2>/dev/null; then
-                                    log "INFO" "Backed up named volume data: $volume_name -> $mount_point"
-                                else
-                                    log "WARNING" "Failed to backup named volume: $volume_name"
-                                fi
-                            fi
-                        elif [[ "$volume" =~ ^/.+:.+ ]]; then
-                            # Bind mount format: /host/path:/container/path
-                            local host_path=$(echo "$volume" | cut -d':' -f1)
-                            local container_path=$(echo "$volume" | cut -d':' -f2)
-                            
-                            echo "Bind Mount: $host_path" >> "$volumes_info"
-                            echo "  Container Path: $container_path" >> "$volumes_info"
-                            echo "  Note: Bind mounts should be backed up separately if needed" >> "$volumes_info"
-                            echo "" >> "$volumes_info"
-                        fi
-                    done
-                    
-                    # Also list defined volumes section
-                    yq eval '.volumes | keys | .[]' "$compose_file" 2>/dev/null | while read -r defined_volume; do
-                        echo "Defined Volume: $defined_volume" >> "$volumes_info"
-                        local mount_point=$(docker volume inspect "${project_dir##*/}_$defined_volume" --format '{{.Mountpoint}}' 2>/dev/null)
-                        if [[ -n "$mount_point" ]]; then
-                            echo "  Mount Point: $mount_point" >> "$volumes_info"
-                        fi
-                        echo "" >> "$volumes_info"
-                    done
-                fi
-                
-                # Copy any additional configuration files commonly found in Docker projects
-                for config_file in "Dockerfile" ".dockerignore" "docker-compose.override.yml" "docker-compose.override.yaml"; do
-                    if [[ -f "$project_dir/$config_file" ]]; then
-                        cp "$project_dir/$config_file" "$dest_dir/" 2>/dev/null && {
-                            log "INFO" "Backed up config file: $project_dir/$config_file"
-                        }
-                    fi
-                done
-            done
-        else
-            log "INFO" "/opt directory not found, skipping Docker Compose search"
-        fi
-        
-        # Export running containers list
-        docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" > "$docker_temp_dir/running_containers.txt" 2>/dev/null && {
-            log "INFO" "Exported running containers list"
-        } || {
-            log "WARNING" "Failed to export running containers list"
-        }
-        
-        # Export all containers list
-        docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" > "$docker_temp_dir/all_containers.txt" 2>/dev/null && {
-            log "INFO" "Exported all containers list"
-        } || {
-            log "WARNING" "Failed to export all containers list"
-        }
-        
-        # Export Docker images list
-        docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}" > "$docker_temp_dir/images.txt" 2>/dev/null && {
-            log "INFO" "Exported Docker images list"
-        } || {
-            log "WARNING" "Failed to export Docker images list"
-        }
-        
-        # Export Docker networks list
-        docker network ls --format "table {{.Name}}\t{{.Driver}}\t{{.Scope}}" > "$docker_temp_dir/networks.txt" 2>/dev/null && {
-            log "INFO" "Exported Docker networks list"
-        } || {
-            log "WARNING" "Failed to export Docker networks list"
-        }
-        
-        # Export Docker volumes list
-        docker volume ls --format "table {{.Name}}\t{{.Driver}}" > "$docker_temp_dir/volumes.txt" 2>/dev/null && {
-            log "INFO" "Exported Docker volumes list"
-        } || {
-            log "WARNING" "Failed to export Docker volumes list"
-        }
-        
-        copy_to_backup_disks "$docker_temp_dir" "docker"
-        
-        log "INFO" "Docker backup completed"
-    else
-        log "INFO" "Docker backup disabled"
+    local paths_count=$(yq eval '.backups.paths | length' "$CONFIG_FILE")
+    
+    if [[ $paths_count -eq 0 ]]; then
+        log "INFO" "No paths configured for backup"
+        return
     fi
+    
+    # Backup each configured path
+    for ((i=0; i<paths_count; i++)); do
+        local backup_path=$(yq eval ".backups.paths[$i].path" "$CONFIG_FILE")
+        local label=$(yq eval ".backups.paths[$i].label" "$CONFIG_FILE")
+        
+        if [[ -d "$backup_path" ]]; then
+            log "INFO" "Backing up path: $backup_path (label: $label)"
+            
+            local path_temp_dir="$TEMP_DIR/paths/$label"
+            mkdir -p "$path_temp_dir"
+            
+            if rsync -av "$backup_path/" "$path_temp_dir/"; then
+                log "INFO" "Path $backup_path backup completed"
+                copy_to_backup_disks "$path_temp_dir" "paths/$label"
+            else
+                handle_error "Failed to backup path $backup_path"
+            fi
+        else
+            log "WARNING" "Path $backup_path does not exist, skipping"
+        fi
+    done
+    
+    log "INFO" "Configured paths backup completed"
 }
 
 # Function to copy data to backup disks
@@ -764,17 +725,17 @@ main() {
     # Step 3: Backup PostgreSQL
     backup_postgresql
     
-    # Step 4: Backup /etc
-    backup_etc
+    # Step 4: Backup services
+    backup_services
     
     # Step 5: Backup configured paths
     backup_configured_paths
     
-    # Step 6: Backup certificates
-    backup_certificates
+    # Step 6: Backup /etc
+    backup_etc
     
-    # Step 7: Backup Docker configurations
-    backup_docker
+    # Step 7: Backup certificates
+    backup_certificates
     
     # Step 8: Create snapshots
     create_snapshots
