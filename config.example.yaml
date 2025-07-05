@@ -15,9 +15,11 @@ policy:
   monthly_retention: 3
   
 backups:
-  postgresql:
-    global: true
-    all_db: false
+  infrastructure:
+    postgresql:
+      global: true
+      all_db: false
+      config: true # /etc/postgresql
   services:
     - label: gitea # mandatory
       systemd: gitea # mandatory

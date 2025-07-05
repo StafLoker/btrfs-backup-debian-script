@@ -179,58 +179,86 @@ verify_directory_structure() {
 
 # Function to backup PostgreSQL databases
 backup_postgresql() {
-    local pg_global=$(yq eval '.backups.postgresql.global // false' "$CONFIG_FILE")
-    local pg_all_db=$(yq eval '.backups.postgresql.all_db // false' "$CONFIG_FILE")
+    local pg_global=$(yq eval '.backups.infrastructure.postgresql.global // false' "$CONFIG_FILE")
+    local pg_all_db=$(yq eval '.backups.infrastructure.postgresql.all_db // false' "$CONFIG_FILE")
+    local pg_config=$(yq eval '.backups.infrastructure.postgresql.config // false' "$CONFIG_FILE")
     
-    if [[ "$pg_global" == "true" ]] || [[ "$pg_all_db" == "true" ]]; then
-        log "INFO" "Starting PostgreSQL backup..."
-        
-        if ! command -v pg_dumpall &>/dev/null; then
-            log "WARNING" "pg_dumpall not found, skipping PostgreSQL backup"
-            return
-        fi
+    if [[ "$pg_global" == "true" ]] || [[ "$pg_all_db" == "true" ]] || [[ "$pg_config" == "true" ]]; then
+        log "INFO" "Starting PostgreSQL infrastructure backup..."
         
         # Create temp directory for PostgreSQL backups
-        local pg_temp_dir="$TEMP_DIR/postgresql"
+        local pg_temp_dir="$TEMP_DIR/infrastructure/postgresql"
         mkdir -p "$pg_temp_dir"
         
         # Backup global configurations if enabled
         if [[ "$pg_global" == "true" ]]; then
             log "INFO" "Backing up PostgreSQL global configurations..."
-            if sudo -u postgres pg_dumpall --globals-only > "$pg_temp_dir/globals_${TIMESTAMP}.sql"; then
-                log "INFO" "PostgreSQL globals backup completed"
+            if command -v pg_dumpall &>/dev/null; then
+                if sudo -u postgres pg_dumpall --globals-only > "$pg_temp_dir/globals_${TIMESTAMP}.sql"; then
+                    log "INFO" "PostgreSQL globals backup completed"
+                else
+                    handle_error "Failed to backup PostgreSQL globals"
+                fi
             else
-                handle_error "Failed to backup PostgreSQL globals"
+                log "WARNING" "pg_dumpall not found, skipping PostgreSQL globals backup"
             fi
         fi
         
         # Backup all databases if enabled
         if [[ "$pg_all_db" == "true" ]]; then
             log "INFO" "Backing up all PostgreSQL databases..."
-            local databases
-            if databases=$(sudo -u postgres psql -t -c "SELECT datname FROM pg_database WHERE datistemplate = false;"); then
-                while IFS= read -r db; do
-                    db=$(echo "$db" | xargs) # Trim whitespace
-                    if [[ -n "$db" ]]; then
-                        log "INFO" "Backing up database: $db"
-                        if sudo -u postgres pg_dump "$db" > "$pg_temp_dir/${db}_${TIMESTAMP}.sql"; then
-                            log "INFO" "Database $db backup completed"
-                        else
-                            handle_error "Failed to backup database $db"
+            if command -v pg_dump &>/dev/null; then
+                local databases
+                if databases=$(sudo -u postgres psql -t -c "SELECT datname FROM pg_database WHERE datistemplate = false;"); then
+                    while IFS= read -r db; do
+                        db=$(echo "$db" | xargs) # Trim whitespace
+                        if [[ -n "$db" ]]; then
+                            log "INFO" "Backing up database: $db"
+                            if sudo -u postgres pg_dump "$db" > "$pg_temp_dir/${db}_${TIMESTAMP}.sql"; then
+                                log "INFO" "Database $db backup completed"
+                            else
+                                handle_error "Failed to backup database $db"
+                            fi
                         fi
-                    fi
-                done <<< "$databases"
+                    done <<< "$databases"
+                else
+                    handle_error "Failed to get database list"
+                fi
             else
-                handle_error "Failed to get database list"
+                log "WARNING" "pg_dump not found, skipping PostgreSQL databases backup"
+            fi
+        fi
+        
+        # Backup PostgreSQL configuration if enabled
+        if [[ "$pg_config" == "true" ]]; then
+            log "INFO" "Backing up PostgreSQL configuration..."
+            local etc_enabled=$(yq eval '.backups.etc // false' "$CONFIG_FILE")
+            
+            # Skip if /etc backup is enabled (avoid duplication)
+            if [[ "$etc_enabled" == "true" ]]; then
+                log "INFO" "Skipping PostgreSQL config backup (covered by /etc backup): /etc/postgresql"
+            else
+                if [[ -d "/etc/postgresql" ]]; then
+                    local config_backup_dir="$pg_temp_dir/config"
+                    mkdir -p "$config_backup_dir"
+                    
+                    if rsync -av /etc/postgresql/ "$config_backup_dir/"; then
+                        log "INFO" "PostgreSQL configuration backup completed"
+                    else
+                        handle_error "Failed to backup PostgreSQL configuration"
+                    fi
+                else
+                    log "WARNING" "PostgreSQL configuration directory /etc/postgresql not found"
+                fi
             fi
         fi
         
         # Copy PostgreSQL backups to each backup disk
-        copy_to_backup_disks "$pg_temp_dir" "postgresql"
+        copy_to_backup_disks "$pg_temp_dir" "infrastructure/postgresql"
         
-        log "INFO" "PostgreSQL backup completed"
+        log "INFO" "PostgreSQL infrastructure backup completed"
     else
-        log "INFO" "PostgreSQL backup disabled"
+        log "INFO" "PostgreSQL infrastructure backup disabled"
     fi
 }
 
@@ -722,7 +750,7 @@ main() {
     # Step 2: Verify directory structure
     verify_directory_structure
     
-    # Step 3: Backup PostgreSQL
+    # Step 3: Backup PostgreSQL infrastructure
     backup_postgresql
     
     # Step 4: Backup services
