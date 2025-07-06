@@ -2,7 +2,7 @@
 
 # BTRFS Backup Installer Script
 # Repository: https://github.com/StafLoker/btrfs-backup-debian-script
-# Usage: sudo bash <(curl -Ls "https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main/install.sh")
+# Usage: sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main/install.sh)"
 
 set -euo pipefail
 
@@ -84,7 +84,7 @@ check_root() {
 check_dependencies() {
     log_info "Checking dependencies..."
     
-    local dependencies=("curl" "sed" "yq" "btrfs")
+    local dependencies=("curl" "wget" "sed" "tar" "yq" "rsync")
     local missing_deps=()
     
     for cmd in "${dependencies[@]}"; do
@@ -96,16 +96,51 @@ check_dependencies() {
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         log_warning "Missing dependencies: ${missing_deps[*]}"
         
-        if ask_yes_no "Do you want to install missing dependencies?"; then
+        if ask_yes_no "Do you want to install missing dependencies?" "y"; then
             log_info "Installing dependencies..."
             apt-get update
             
             for dep in "${missing_deps[@]}"; do
                 case "$dep" in
                     "yq")
-                        log_info "Installing yq..."
-                        wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                        log_info "Installing the correct yq version (mikefarah/yq)..."
+                        
+                        # Detect architecture
+                        local ARCH=$(uname -m)
+                        local YQ_VERSION="v4.45.4"
+                        local YQ_BINARY
+                        
+                        case $ARCH in
+                            x86_64)
+                                YQ_BINARY="yq_linux_amd64"
+                                ;;
+                            aarch64|arm64)
+                                YQ_BINARY="yq_linux_arm64"
+                                ;;
+                            armv7l|armv6l)
+                                YQ_BINARY="yq_linux_arm"
+                                ;;
+                            i386|i686)
+                                YQ_BINARY="yq_linux_386"
+                                ;;
+                            *)
+                                log_error "Unsupported architecture: $ARCH"
+                                exit 1
+                                ;;
+                        esac
+                        
+                        log_info "Detected architecture: $ARCH"
+                        log_info "Downloading yq ${YQ_VERSION} (${YQ_BINARY})..."
+                        wget -O /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
                         chmod +x /usr/local/bin/yq
+                        
+                        # Verify installation
+                        if /usr/local/bin/yq --version &>/dev/null; then
+                            log_success "yq installed successfully"
+                        else
+                            log_error "Failed to install yq"
+                            exit 1
+                        fi
                         ;;
                     "btrfs")
                         log_info "Installing btrfs-progs..."
@@ -120,7 +155,7 @@ check_dependencies() {
             
             log_success "Dependencies installed successfully"
         else
-            log_error "Cannot install dependencies. Aborting installation."
+            log_error "Cannot continue without dependencies. Aborting installation."
             exit 1
         fi
     else
@@ -140,17 +175,23 @@ init_config() {
         log_info "Creating initial configuration file..."
         cat > "$CONFIG_FILE" <<EOF
 parts: []
+notifications: false
 policy:
   daily_retention: 7
   weekly_retention: 4
   monthly_retention: 12
 backups:
-  postgresql: false
+  infrastructure:
+    postgresql:
+      global: false
+      all_db: false
+      config: false
+    nginx:
+      config: false
+      certificates: false
+  services: []
   paths: []
   etc: false
-  docker: false
-  certificates: false
-notifications: false
 EOF
         log_success "Configuration file created: $CONFIG_FILE"
     else
@@ -277,22 +318,66 @@ configure_policy() {
     fi
 }
 
-# Function to configure PostgreSQL backup
-configure_postgresql() {
-    log_info "Configuring PostgreSQL backup..."
+# Function to configure PostgreSQL infrastructure
+configure_postgresql_infrastructure() {
+    log_info "Configuring PostgreSQL infrastructure..."
     
-    local current_pg=$(yq eval '.backups.postgresql' "$CONFIG_FILE")
+    local current_global=$(yq eval '.backups.infrastructure.postgresql.global // false' "$CONFIG_FILE")
+    local current_all_db=$(yq eval '.backups.infrastructure.postgresql.all_db // false' "$CONFIG_FILE")
+    local current_config=$(yq eval '.backups.infrastructure.postgresql.config // false' "$CONFIG_FILE")
     
-    if [[ "$current_pg" == "false" ]]; then
-        if ask_yes_no "Do you want to backup PostgreSQL?"; then
-            yq eval '.backups.postgresql = true' -i "$CONFIG_FILE"
-            log_success "PostgreSQL backup enabled"
+    log_info "Current PostgreSQL configuration:"
+    log_info "  Global backup: $current_global"
+    log_info "  All databases: $current_all_db"
+    log_info "  Configuration: $current_config"
+    
+    if ask_yes_no "Do you want to configure PostgreSQL infrastructure backup?"; then
+        # Configure global backup
+        if ask_yes_no "Enable PostgreSQL global backup (roles, users)?"; then
+            yq eval '.backups.infrastructure.postgresql.global = true' -i "$CONFIG_FILE"
+            log_success "PostgreSQL global backup enabled"
         fi
-    else
-        log_info "PostgreSQL backup already enabled"
+        
+        # Configure all databases backup
+        if ask_yes_no "Enable backup of all PostgreSQL databases?"; then
+            yq eval '.backups.infrastructure.postgresql.all_db = true' -i "$CONFIG_FILE"
+            log_success "PostgreSQL all databases backup enabled"
+        fi
+        
+        # Configure configuration backup
+        if ask_yes_no "Enable PostgreSQL configuration backup (/etc/postgresql)?"; then
+            yq eval '.backups.infrastructure.postgresql.config = true' -i "$CONFIG_FILE"
+            log_success "PostgreSQL configuration backup enabled"
+        fi
     fi
 }
 
+# Function to configure Nginx infrastructure
+configure_nginx_infrastructure() {
+    log_info "Configuring Nginx infrastructure..."
+    
+    local current_config=$(yq eval '.backups.infrastructure.nginx.config // false' "$CONFIG_FILE")
+    local current_certs=$(yq eval '.backups.infrastructure.nginx.certificates // false' "$CONFIG_FILE")
+    
+    log_info "Current Nginx configuration:"
+    log_info "  Configuration backup: $current_config"
+    log_info "  Certificates backup: $current_certs"
+    
+    if ask_yes_no "Do you want to configure Nginx infrastructure backup?"; then
+        # Configure configuration backup
+        if ask_yes_no "Enable Nginx configuration backup (/etc/nginx)?"; then
+            yq eval '.backups.infrastructure.nginx.config = true' -i "$CONFIG_FILE"
+            log_success "Nginx configuration backup enabled"
+        fi
+        
+        # Configure certificates backup
+        if ask_yes_no "Enable Nginx certificates backup (from sites-available)?"; then
+            yq eval '.backups.infrastructure.nginx.certificates = true' -i "$CONFIG_FILE"
+            log_success "Nginx certificates backup enabled"
+            log_info "This will analyze nginx sites and backup only certificates in use"
+        fi
+    fi
+}
 # Function to configure path backups
 configure_paths() {
     log_info "Configuring paths for backup..."
@@ -305,22 +390,19 @@ configure_paths() {
             read -p "Path to backup (e.g., /home/user/photos): " backup_path
             
             if [[ -n "$backup_path" ]]; then
-                read -p "Label for this path (optional): " path_label
-                read -p "Associated systemd service (optional): " systemd_service
+                read -p "Label for this path (mandatory): " path_label
+                
+                if [[ -z "$path_label" ]]; then
+                    log_warning "Label is mandatory for paths"
+                    continue
+                fi
                 
                 # Build path object
-                local path_obj="{\"path\": \"$backup_path\""
-                if [[ -n "$path_label" ]]; then
-                    path_obj="${path_obj}, \"label\": \"$path_label\""
-                fi
-                if [[ -n "$systemd_service" ]]; then
-                    path_obj="${path_obj}, \"systemd\": \"$systemd_service\""
-                fi
-                path_obj="${path_obj}}"
+                local path_obj="{\"label\": \"$path_label\", \"path\": \"$backup_path\"}"
                 
                 # Add to config
                 yq eval ".backups.paths += [$path_obj]" -i "$CONFIG_FILE"
-                log_success "Path added: $backup_path"
+                log_success "Path added: $backup_path (label: $path_label)"
             fi
             
             if ! ask_yes_no "Do you want to add another path?"; then
@@ -343,42 +425,6 @@ configure_etc() {
         fi
     else
         log_info "/etc backup already enabled"
-    fi
-}
-
-# Function to configure Docker backup
-configure_docker() {
-    log_info "Configuring Docker backup..."
-    
-    local current_docker=$(yq eval '.backups.docker' "$CONFIG_FILE")
-    
-    if [[ "$current_docker" == "false" ]]; then
-        if command -v docker &>/dev/null; then
-            if ask_yes_no "Do you want to backup Docker?"; then
-                yq eval '.backups.docker = true' -i "$CONFIG_FILE"
-                log_success "Docker backup enabled"
-            fi
-        else
-            log_info "Docker not installed, skipping configuration"
-        fi
-    else
-        log_info "Docker backup already enabled"
-    fi
-}
-
-# Function to configure certificates backup
-configure_certificates() {
-    log_info "Configuring certificates backup..."
-    
-    local current_certs=$(yq eval '.backups.certificates' "$CONFIG_FILE")
-    
-    if [[ "$current_certs" == "false" ]]; then
-        if ask_yes_no "Do you want to backup SSL certificates?"; then
-            yq eval '.backups.certificates = true' -i "$CONFIG_FILE"
-            log_success "Certificates backup enabled"
-        fi
-    else
-        log_info "Certificates backup already enabled"
     fi
 }
 
@@ -429,7 +475,7 @@ download_scripts() {
     # Download main script
     local repo_url="https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main"
     
-    curl -Ls "$repo_url/btrfs-backup-debian-script.sh" -o "$INSTALL_DIR/$SCRIPT_NAME"
+    curl -Ls "$repo_url/backup.sh" -o "$INSTALL_DIR/$SCRIPT_NAME"
     curl -Ls "$repo_url/README.md" -o "$INSTALL_DIR/README.md"
     curl -Ls "$repo_url/LICENSE" -o "$INSTALL_DIR/LICENSE"
     
@@ -596,40 +642,38 @@ main() {
     # Step 5: Configure retention policy
     configure_policy
     
-    # Step 6: Configure PostgreSQL backup
-    configure_postgresql
+    # Step 6: Configure infrastructure
+    configure_postgresql_infrastructure
+    configure_nginx_infrastructure
     
-    # Step 7: Configure path backups
+    # Step 7: Configure services
+    configure_services
+    
+    # Step 8: Configure path backups
     configure_paths
     
-    # Step 8: Configure /etc backup
+    # Step 9: Configure /etc backup
     configure_etc
     
-    # Step 9: Configure Docker backup
-    configure_docker
-    
-    # Step 10: Configure certificates backup
-    configure_certificates
-    
-    # Step 10a: Configure notifications
+    # Step 10: Configure notifications
     configure_notifications
     
     # Step 11: Display final configuration
     display_config
     
-    # Step 11a: Download scripts
+    # Step 12: Download scripts
     download_scripts
     
-    # Step 12: Configure logging
+    # Step 13: Configure logging
     configure_logging
     
-    # Step 13: Create systemd service and timer
+    # Step 14: Create systemd service and timer
     create_systemd_service
     
-    # Step 14: Run initial backup
+    # Step 15: Run initial backup
     run_initial_backup
     
-    # Step 15: Unmount disks
+    # Step 16: Unmount disks
     unmount_disks
     
     # Show final status
