@@ -1,6 +1,6 @@
 <div align="center">
    <h1><b>BTRFS Backup Debian Script</b></h1>
-   <p><i>~ Still online ~</i></p>
+   <p><i>~ Sleep quietly ~</i></p>
    <p align="center">
        · <a href="https://github.com/StafLoker/btrfs-backup-debian-script/releases">Releases</a> ·
    </p>
@@ -11,20 +11,20 @@
    <a href="https://github.com/StafLoker/btrfs-backup-debian-script/releases"><img src="https://img.shields.io/github/release-pre/StafLoker/btrfs-backup-debian-script.svg?style=flat" alt="latest version"/></a>
    <a href="https://github.com/StafLoker/btrfs-backup-debian-script/blob/main/LICENSE"><img src="https://img.shields.io/github/license/StafLoker/btrfs-backup-debian-script.svg?style=flat" alt="license"/></a>
 
-   <p>A comprehensive backup solution for Debian-based systems using BTRFS snapshots. This script provides automated backups of PostgreSQL databases, system configurations, application data, SSL certificates, and Docker configurations with intelligent retention policies.</p>
+   <p>A comprehensive backup solution for Debian-based systems using BTRFS snapshots. This script provides automated backups of PostgreSQL databases, system configurations, application data, SSL certificates, and service configurations with intelligent retention policies.</p>
 </div>
 
 ## **Features**
 
 - 🔄 **Automated BTRFS Snapshots** - Daily, weekly, and monthly snapshots with configurable retention
-- 🗃️ **PostgreSQL Backup** - Complete database dumps including globals and individual databases
-- ⚙️ **System Configuration Backup** - Backs up `/etc` while excluding sensitive files
-- 📁 **Custom Path Backup** - Configurable paths with optional service management
-- 🔒 **SSL Certificate Backup** - Let's Encrypt, custom SSL certificates, and private keys
-- 🐳 **Docker Configuration Backup** - Docker daemon configs and docker-compose files
-- 📱 **Telegram Notifications** - Real-time backup status and error notifications
-- 🔧 **Service Management** - Automatic stop/start of services during backup
-- 📊 **Retention Policies** - Configurable cleanup of old snapshots
+- 🗃️ **PostgreSQL Infrastructure Backup** - Complete database dumps including globals and individual databases
+- 🌐 **Nginx Infrastructure Backup** - Configuration and SSL certificates management
+- ⚙️ **Service Management Backup** - Complete service backup with Docker Compose, configurations, data, and logs
+- 📁 **Custom Path Backup** - Configurable paths with optional labels
+- 🔒 **System Configuration Backup** - Backs up `/etc` while excluding sensitive files and avoiding duplicates
+- 📱 **Telegram Notifications** - Real-time backup status and error notifications with disk usage info
+- 🛠️ **Automatic Service Management** - Stop/start services during backup to ensure data consistency
+- 📊 **Intelligent Retention Policies** - Configurable cleanup of old snapshots
 - 🚀 **Easy Installation** - One-command setup with interactive configuration
 
 ## **Requirements**
@@ -36,11 +36,13 @@
 
 ### **Dependencies** (automatically installed)
 - `curl` - For downloading and API calls
+- `wget` - For file downloads
 - `sed` - Text processing
-- `yq` - YAML processing
+- `tar` - Archive handling
+- `yq` - YAML processing (mikefarah/yq v4.45.4)
 - `btrfs-progs` - BTRFS utilities
 - `rsync` - File synchronization
-- `postgresql-client` (if PostgreSQL backup enabled)
+- `postgresql-client` (optional, for PostgreSQL backups)
 
 ## **Install & Upgrade**
 
@@ -64,10 +66,13 @@ sudo ./install.sh
 The installer will guide you through:
 1. **Dependency Installation** - Automatic detection and installation of required packages
 2. **Disk Configuration** - Setup of backup drives and mount points
-3. **Backup Configuration** - Selection of what to backup (PostgreSQL, paths, certificates, etc.)
-4. **Retention Policy** - Configuration of snapshot retention periods
-5. **Notifications Setup** - Optional Telegram bot configuration
-6. **Service Creation** - Systemd service and timer setup
+3. **Retention Policy Configuration** - Configuration of snapshot retention periods
+4. **Infrastructure Backup Configuration** - PostgreSQL and Nginx backup settings
+5. **Service Backup Configuration** - Individual service backup settings (Docker Compose, data, configs, logs)
+6. **Path Backup Configuration** - Custom directories to backup
+7. **System Configuration** - /etc directory backup settings
+8. **Notifications Setup** - Optional Telegram bot configuration
+9. **Service Creation** - Systemd service and timer setup
 
 ## **Configuration**
 
@@ -75,34 +80,62 @@ The installer will guide you through:
 Location: `/etc/btrfs-backup/config.yaml`
 
 ```yaml
+# At least one backup disk is required
 parts:
   - label: backup_1
-    path: /mnt/backups/disk_1
     dev: /dev/sdc1
+    path: /mnt/backups/disk_1
   - label: backup_2
-    path: /mnt/backups/disk_2
     dev: /dev/sdd1
+    path: /mnt/backups/disk_2
 
+# Enable/disable Telegram notifications
+notifications: true
+
+# Snapshot retention policies
 policy:
   daily_retention: 7      # Keep 7 daily snapshots
-  weekly_retention: 4     # Keep 4 weekly snapshots
-  monthly_retention: 12   # Keep 12 monthly snapshots
+  weekly_retention: 4     # Keep 4 weekly snapshots (created on Sundays)
+  monthly_retention: 12   # Keep 12 monthly snapshots (created on 1st of month)
 
 backups:
-  postgresql: true
-  paths:
-    - path: /home/user/photos
-    - label: service_1
-      systemd: service_1
-      path: /var/lib/service_1
-    - label: service_2
-      systemd: service_2
-      path: /var/lib/service_2
-  etc: true
-  docker: true
-  certificates: true
+  # Infrastructure services backup
+  infrastructure:
+    postgresql:
+      global: true        # Backup global configurations (roles, users)
+      all_db: true        # Backup all databases
+      config: true        # Backup /etc/postgresql (skipped if etc: true)
+    nginx:
+      config: true        # Backup /etc/nginx (skipped if etc: true)
+      certificates: true  # Backup SSL certificates from sites-available
 
-notifications: true
+  # Individual services backup
+  services:
+    - label: gitea                    # Mandatory: Service identifier
+      systemd: gitea                  # Mandatory: Systemd service name
+      docker_compsose: /opt/gitea     # Optional: Docker Compose directory
+      config: /etc/gitea              # Optional: Configuration directory
+      data:
+        files: /var/lib/gitea         # Optional: Data files directory
+        pg-db: giteadb               # Optional: PostgreSQL database name
+      logs: /var/log/gitea           # Optional: Logs directory
+
+    - label: linkwarden
+      systemd: linkwarden
+      docker_compsose: /opt/linkwarden
+      data:
+        files: /var/lib/linkwarden
+        pg-db: linkwardendb
+
+  # Custom paths backup
+  paths:
+    - label: user_photos             # Mandatory: Path identifier
+      path: /home/user/photos        # Mandatory: Directory to backup
+    - label: documents
+      path: /srv/documents
+
+  # System configuration backup
+  etc: true  # Backup /etc directory (excludes sensitive files and duplicates from infrastructure/services)
 ```
 
 ### **Environment Variables**
@@ -151,22 +184,60 @@ Each backup disk will have the following structure:
 ```
 /mnt/backups/disk_1/
 └── hostname/
-    ├── data/                    # Current backup data (BTRFS subvolume)
-    │   ├── postgresql/         # Database dumps
-    │   ├── etc/               # System configurations
-    │   ├── paths/             # Custom paths
-    │   ├── certificates/      # SSL certificates
-    │   └── docker/            # Docker configurations
-    └── snapshots/             # Historical snapshots
-        ├── daily/             # Daily snapshots
-        ├── weekly/            # Weekly snapshots (Sundays)
-        └── monthly/           # Monthly snapshots (1st of month)
+    ├── data/                           # Current backup data (BTRFS subvolume)
+    │   ├── infrastructure/             # Infrastructure backups
+    │   │   ├── postgresql/            # PostgreSQL dumps and config
+    │   │   │   ├── globals_timestamp.sql
+    │   │   │   ├── database_timestamp.sql
+    │   │   │   └── config/            # PostgreSQL configuration
+    │   │   └── nginx/                 # Nginx configuration and certificates
+    │   │       ├── config/            # Nginx configuration files
+    │   │       └── certificates/      # SSL certificates by site
+    │   ├── services/                   # Individual services
+    │   │   ├── gitea/                 # Service-specific backups
+    │   │   │   ├── docker_compose/    # Docker Compose files
+    │   │   │   ├── config/            # Service configuration
+    │   │   │   ├── data_files/        # Service data files
+    │   │   │   ├── database/          # Service database dumps
+    │   │   │   └── logs/              # Service logs
+    │   │   └── linkwarden/
+    │   ├── paths/                      # Custom paths
+    │   │   ├── user_photos/           # Labeled custom directories
+    │   │   └── documents/
+    │   └── etc/                       # System configuration
+    └── snapshots/                     # Historical snapshots
+        ├── daily/                     # Daily snapshots
+        ├── weekly/                    # Weekly snapshots (Sundays)
+        └── monthly/                   # Monthly snapshots (1st of month)
 ```
+
+## **Service Backup Details**
+
+### **Docker Compose Backup**
+When `docker_compsose` is specified, the script backs up:
+- `docker-compose.yml` and `docker-compose.yaml` files
+- All `.env*` files
+- `Dockerfile`, `.dockerignore`
+- `docker-compose.override.yml/yaml` files
+
+### **Service Management**
+- All services with `systemd` parameter are stopped before backup
+- Services are restarted after backup completion
+- Ensures data consistency during backup process
+
+### **Database Backup**
+- PostgreSQL databases specified in `pg-db` are dumped individually
+- Global PostgreSQL backup includes roles and users
+- All database backups include timestamp in filename
+
+### **Intelligent Duplication Avoidance**
+- If `etc: true` is enabled, service configs under `/etc/` are skipped
+- Infrastructure configs are skipped if covered by `/etc` backup
+- Prevents duplicate backups and saves storage space
 
 ## **Telegram Notifications**
 
-To enable Telegram notifications:
-
+### **Setup Instructions**
 1. **Create a Telegram Bot**:
    - Message @BotFather on Telegram
    - Send `/newbot` and follow instructions
@@ -178,6 +249,13 @@ To enable Telegram notifications:
    - Find your chat ID in the response
 
 3. **Configure During Installation** or manually edit `/etc/btrfs-backup/.env`
+
+### **Notification Features**
+- **Success/Failure Status** with appropriate icons
+- **Backup Duration** timing information
+- **Disk Usage Information** for each backup disk
+- **Error Details** when backups fail
+- **Real-time Error Notifications** during backup process
 
 ## **Management Commands**
 
@@ -224,10 +302,22 @@ ls /mnt/backups/disk_1/hostname/snapshots/daily/
 sudo cp -r /mnt/backups/disk_1/hostname/snapshots/daily/20250101_040000/etc/nginx/ /etc/nginx/
 ```
 
+### **Service Recovery**
+```bash
+# Restore service data
+sudo rsync -av /mnt/backups/disk_1/hostname/data/services/gitea/data_files/ /var/lib/gitea/
+
+# Restore service configuration
+sudo rsync -av /mnt/backups/disk_1/hostname/data/services/gitea/config/ /etc/gitea/
+```
+
 ### **Database Recovery**
 ```bash
 # Restore PostgreSQL database
-sudo -u postgres psql < /mnt/backups/disk_1/hostname/data/postgresql/database_name_20250101_040000.sql
+sudo -u postgres psql < /mnt/backups/disk_1/hostname/data/infrastructure/postgresql/database_name_20250101_040000.sql
+
+# Restore service database
+sudo -u postgres psql < /mnt/backups/disk_1/hostname/data/services/gitea/database/giteadb_20250101_040000.sql
 ```
 
 ### **Complete System Recovery**
@@ -269,6 +359,18 @@ sudo systemctl status postgresql
 
 # Test database connection
 sudo -u postgres psql -l
+
+# Install PostgreSQL client if missing
+sudo apt-get install postgresql-client
+```
+
+**Service fails to stop/start**:
+```bash
+# Check service status
+sudo systemctl status service_name
+
+# Check service logs
+sudo journalctl -u service_name
 ```
 
 ### **Log Analysis**
@@ -278,19 +380,36 @@ sudo grep -i error /var/log/backup_$(hostname).log
 
 # View systemd service errors
 sudo journalctl -u backup-$(hostname).service --since yesterday
+
+# Check BTRFS filesystem health
+sudo btrfs filesystem show
+sudo btrfs scrub status /mnt/backups/disk_1
 ```
 
 ## **Customization**
 
-### **Adding Custom Backup Paths**
+### **Adding New Services**
 Edit `/etc/btrfs-backup/config.yaml`:
 
 ```yaml
 backups:
+  services:
+    - label: myservice
+      systemd: myservice.service
+      docker_compsose: /opt/myservice    # Optional
+      config: /etc/myservice             # Optional
+      data:
+        files: /var/lib/myservice        # Optional
+        pg-db: myservicedb              # Optional
+      logs: /var/log/myservice           # Optional
+```
+
+### **Adding Custom Backup Paths**
+```yaml
+backups:
   paths:
-    - path: /opt/myapp
-      label: myapp
-      systemd: myapp.service  # Optional: stop service during backup
+    - label: mydata
+      path: /opt/mydata
 ```
 
 ### **Changing Backup Schedule**
@@ -304,6 +423,7 @@ Add custom schedule:
 ```ini
 [Timer]
 OnCalendar=*-*-* 02:00:00  # 2:00 AM daily
+OnCalendar=Sun *-*-* 03:00:00  # 3:00 AM on Sundays only
 ```
 
 ### **Custom Retention Policies**
@@ -323,6 +443,7 @@ policy:
 - **Network Security**: If using network-attached storage, ensure secure connection
 - **Access Control**: Regularly review who has access to backup systems
 - **Key Rotation**: Periodically rotate Telegram bot tokens and other credentials
+- **Database Security**: PostgreSQL backups may contain sensitive data - secure backup locations appropriately
 
 ## **Performance Optimization**
 
@@ -330,11 +451,17 @@ policy:
 - Use multiple backup drives for parallel writes
 - Consider excluding cache directories and temporary files
 - Schedule backups during low-usage periods
+- Monitor disk I/O during backup operations
 
-### **Network Backups**
-- Use compression for network transfers
-- Implement bandwidth throttling if needed
-- Consider incremental network sync tools
+### **Service Dependencies**
+- Configure service dependencies properly in systemd
+- Consider backup order for interconnected services
+- Use maintenance windows for critical service backups
+
+### **BTRFS Optimization**
+- Regular filesystem scrubbing: `sudo btrfs scrub start /mnt/backups/disk_1`
+- Monitor filesystem health: `sudo btrfs filesystem usage /mnt/backups/disk_1`
+- Consider compression for backup drives: `sudo mount -o compress=zstd /dev/sdc1 /mnt/backups/disk_1`
 
 ## **Contributing**
 
@@ -352,16 +479,6 @@ chmod +x install.sh backup.sh
 sudo ./install.sh
 ```
 
-## **Support**
-
-- **Issues**: [GitHub Issues](https://github.com/StafLoker/btrfs-backup-debian-script/issues)
-- **Documentation**: This README and inline script comments
-- **Community**: Feel free to fork and adapt for your needs
-
 ## **License**
 
 This project is released under the MIT License. See the [LICENSE](LICENSE) file for more details.
-
----
-
-**⚠️ Important**: Always test your backup and recovery procedures in a safe environment before relying on them for production systems.
