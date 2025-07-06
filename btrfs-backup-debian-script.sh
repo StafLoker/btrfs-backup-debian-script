@@ -446,45 +446,157 @@ backup_services() {
     log "INFO" "Services backup completed"
 }
 
-# Function to backup certificates
-backup_certificates() {
-    local certs_enabled=$(yq eval '.backups.certificates' "$CONFIG_FILE")
+# Function to backup nginx
+backup_nginx() {
+    local nginx_config=$(yq eval '.backups.infrastructure.nginx.config // false' "$CONFIG_FILE")
+    local nginx_certificates=$(yq eval '.backups.infrastructure.nginx.certificates // false' "$CONFIG_FILE")
     
-    if [[ "$certs_enabled" == "true" ]]; then
-        log "INFO" "Starting certificates backup..."
+    if [[ "$nginx_config" == "true" ]] || [[ "$nginx_certificates" == "true" ]]; then
+        log "INFO" "Starting Nginx infrastructure backup..."
         
-        local certs_temp_dir="$TEMP_DIR/certificates"
-        mkdir -p "$certs_temp_dir"
+        local nginx_temp_dir="$TEMP_DIR/infrastructure/nginx"
+        mkdir -p "$nginx_temp_dir"
         
-        # Backup Let's Encrypt certificates
-        if [[ -d "/etc/letsencrypt" ]]; then
-            log "INFO" "Backing up Let's Encrypt certificates"
-            rsync -av /etc/letsencrypt/ "$certs_temp_dir/letsencrypt/" || {
-                handle_error "Failed to backup Let's Encrypt certificates"
-            }
+        # Backup Nginx configuration if enabled
+        if [[ "$nginx_config" == "true" ]]; then
+            log "INFO" "Backing up Nginx configuration..."
+            local etc_enabled=$(yq eval '.backups.etc // false' "$CONFIG_FILE")
+            
+            # Skip if /etc backup is enabled (avoid duplication)
+            if [[ "$etc_enabled" == "true" ]]; then
+                log "INFO" "Skipping Nginx config backup (covered by /etc backup): /etc/nginx"
+            else
+                if [[ -d "/etc/nginx" ]]; then
+                    local config_backup_dir="$nginx_temp_dir/config"
+                    mkdir -p "$config_backup_dir"
+                    
+                    if rsync -av /etc/nginx/ "$config_backup_dir/"; then
+                        log "INFO" "Nginx configuration backup completed"
+                    else
+                        handle_error "Failed to backup Nginx configuration"
+                    fi
+                else
+                    log "WARNING" "Nginx configuration directory /etc/nginx not found"
+                fi
+            fi
         fi
         
-        # Backup SSL private keys (with proper permissions)
-        if [[ -d "/etc/ssl/private" ]]; then
-            log "INFO" "Backing up SSL private keys"
-            rsync -av /etc/ssl/private/ "$certs_temp_dir/ssl_private/" || {
-                handle_error "Failed to backup SSL private keys"
-            }
+        # Backup Nginx certificates if enabled
+        if [[ "$nginx_certificates" == "true" ]]; then
+            log "INFO" "Backing up Nginx certificates from sites-available..."
+            local certs_backup_dir="$nginx_temp_dir/certificates"
+            mkdir -p "$certs_backup_dir"
+            
+            # Create certificate info file
+            local cert_info_file="$certs_backup_dir/certificates_info.txt"
+            echo "# Nginx SSL Certificates Information" > "$cert_info_file"
+            echo "# Generated on $(date)" >> "$cert_info_file"
+            echo "" >> "$cert_info_file"
+            
+            if [[ -d "/etc/nginx/sites-available" ]]; then
+                # Parse all nginx site configurations
+                find /etc/nginx/sites-available -type f | while read -r site_config; do
+                    local site_name=$(basename "$site_config")
+                    log "INFO" "Analyzing site configuration: $site_name"
+                    
+                    # Check if site has SSL configuration
+                    if grep -q "ssl_certificate" "$site_config"; then
+                        echo "Site: $site_name" >> "$cert_info_file"
+                        echo "Config: $site_config" >> "$cert_info_file"
+                        
+                        # Extract SSL certificate paths
+                        local ssl_cert_path=$(grep -E "^\s*ssl_certificate\s+" "$site_config" | head -1 | awk '{print $2}' | sed 's/;//')
+                        local ssl_key_path=$(grep -E "^\s*ssl_certificate_key\s+" "$site_config" | head -1 | awk '{print $2}' | sed 's/;//')
+                        
+                        if [[ -n "$ssl_cert_path" ]] && [[ -f "$ssl_cert_path" ]]; then
+                            echo "  SSL Certificate: $ssl_cert_path" >> "$cert_info_file"
+                            
+                            # Create directory structure for this site
+                            local site_cert_dir="$certs_backup_dir/$site_name"
+                            mkdir -p "$site_cert_dir"
+                            
+                            # Copy certificate file
+                            if cp "$ssl_cert_path" "$site_cert_dir/"; then
+                                log "INFO" "Backed up SSL certificate for $site_name: $ssl_cert_path"
+                            else
+                                log "WARNING" "Failed to backup SSL certificate: $ssl_cert_path"
+                            fi
+                            
+                            # Copy certificate chain if it's different from main cert
+                            local ssl_trusted_cert=$(grep -E "^\s*ssl_trusted_certificate\s+" "$site_config" | head -1 | awk '{print $2}' | sed 's/;//')
+                            if [[ -n "$ssl_trusted_cert" ]] && [[ -f "$ssl_trusted_cert" ]] && [[ "$ssl_trusted_cert" != "$ssl_cert_path" ]]; then
+                                echo "  SSL Trusted Certificate: $ssl_trusted_cert" >> "$cert_info_file"
+                                cp "$ssl_trusted_cert" "$site_cert_dir/" 2>/dev/null && {
+                                    log "INFO" "Backed up SSL trusted certificate for $site_name: $ssl_trusted_cert"
+                                }
+                            fi
+                        fi
+                        
+                        if [[ -n "$ssl_key_path" ]] && [[ -f "$ssl_key_path" ]]; then
+                            echo "  SSL Private Key: $ssl_key_path" >> "$cert_info_file"
+                            
+                            # Copy private key file (with secure permissions)
+                            if cp "$ssl_key_path" "$site_cert_dir/"; then
+                                chmod 600 "$site_cert_dir/$(basename "$ssl_key_path")"
+                                log "INFO" "Backed up SSL private key for $site_name: $ssl_key_path"
+                            else
+                                log "WARNING" "Failed to backup SSL private key: $ssl_key_path"
+                            fi
+                        fi
+                        
+                        # Check for Let's Encrypt certificates
+                        if [[ "$ssl_cert_path" =~ /etc/letsencrypt/ ]]; then
+                            echo "  Type: Let's Encrypt" >> "$cert_info_file"
+                            
+                            # Extract domain from Let's Encrypt path
+                            local domain=$(echo "$ssl_cert_path" | sed -n 's|.*/live/\([^/]*\)/.*|\1|p')
+                            if [[ -n "$domain" ]] && [[ -d "/etc/letsencrypt/live/$domain" ]]; then
+                                echo "  Domain: $domain" >> "$cert_info_file"
+                                
+                                # Copy entire Let's Encrypt domain directory
+                                local le_backup_dir="$site_cert_dir/letsencrypt"
+                                mkdir -p "$le_backup_dir"
+                                
+                                if rsync -av "/etc/letsencrypt/live/$domain/" "$le_backup_dir/"; then
+                                    log "INFO" "Backed up Let's Encrypt certificates for domain: $domain"
+                                fi
+                                
+                                # Also backup renewal configuration
+                                if [[ -f "/etc/letsencrypt/renewal/$domain.conf" ]]; then
+                                    cp "/etc/letsencrypt/renewal/$domain.conf" "$le_backup_dir/" 2>/dev/null
+                                fi
+                            fi
+                        else
+                            echo "  Type: Custom SSL Certificate" >> "$cert_info_file"
+                        fi
+                        
+                        echo "" >> "$cert_info_file"
+                    else
+                        log "INFO" "Site $site_name has no SSL configuration"
+                    fi
+                done
+                
+                # Also backup DH parameters if they exist
+                local dh_params="/etc/nginx/dhparam.pem"
+                if [[ -f "$dh_params" ]]; then
+                    cp "$dh_params" "$certs_backup_dir/" 2>/dev/null && {
+                        log "INFO" "Backed up DH parameters: $dh_params"
+                        echo "DH Parameters: $dh_params" >> "$cert_info_file"
+                    }
+                fi
+                
+                log "INFO" "Nginx certificates backup completed"
+            else
+                log "WARNING" "Nginx sites-available directory not found: /etc/nginx/sites-available"
+            fi
         fi
         
-        # Backup Nginx SSL certificates if they exist
-        if [[ -d "/etc/nginx/ssl" ]]; then
-            log "INFO" "Backing up Nginx SSL certificates"
-            rsync -av /etc/nginx/ssl/ "$certs_temp_dir/nginx_ssl/" || {
-                handle_error "Failed to backup Nginx SSL certificates"
-            }
-        fi
+        # Copy nginx backups to each backup disk
+        copy_to_backup_disks "$nginx_temp_dir" "infrastructure/nginx"
         
-        copy_to_backup_disks "$certs_temp_dir" "certificates"
-        
-        log "INFO" "Certificates backup completed"
+        log "INFO" "Nginx backup completed"
     else
-        log "INFO" "Certificates backup disabled"
+        log "INFO" "Nginx backup disabled"
     fi
 }
 
@@ -785,8 +897,9 @@ main() {
     # Step 2: Verify directory structure
     verify_directory_structure
     
-    # Step 3: Backup PostgreSQL infrastructure
+    # Step 3: Backup infrastructure
     backup_postgresql
+    backup_nginx
     
     # Step 4: Backup services
     backup_services
@@ -796,9 +909,6 @@ main() {
     
     # Step 6: Backup /etc
     backup_etc
-    
-    # Step 7: Backup certificates
-    backup_certificates
     
     # Step 8: Create snapshots
     create_snapshots

@@ -20,6 +20,9 @@ backups:
       global: true
       all_db: false
       config: true # /etc/postgresql
+    nginx:
+      config: true # /etc/nginx
+      certificates: true # certificates that used in sited-available
   services:
     - label: gitea # mandatory
       systemd: gitea # mandatory
@@ -37,10 +40,6 @@ backups:
       data:
        files: /var/lib/linkwarden
        pg-db: linkwardendb
-      
-    - label: nginx
-      systemd: nginx
-      config: /etc/nginx
     
     - label: opencloud
       systemd: opencloud
@@ -52,5 +51,4 @@ backups:
       path: /home/user/fotos
     - label: history 
       path: /srv/history/
-  etc: true # exclude folder from services if config start with /etc/
-  certificates: false
+  etc: true # exclude folders from services if config start with /etc/ and infrastructure configs
