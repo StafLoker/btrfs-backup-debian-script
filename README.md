@@ -1,6 +1,18 @@
-# **BTRFS Backup Debian Script**
+<div align="center">
+   <h1><b>BTRFS Backup Debian Script</b></h1>
+   <p><i>~ Still online ~</i></p>
+   <p align="center">
+       · <a href="https://github.com/StafLoker/btrfs-backup-debian-script/releases">Releases</a> ·
+   </p>
+</div>
 
-A comprehensive backup solution for Debian-based systems using BTRFS snapshots. This script provides automated backups of PostgreSQL databases, system configurations, application data, SSL certificates, and Docker configurations with intelligent retention policies.
+<div align="center">
+   <a href="https://github.com/StafLoker/btrfs-backup-debian-script/releases"><img src="https://img.shields.io/github/downloads/StafLoker/btrfs-backup-debian-script/total.svg?style=flat" alt="downloads"/></a>
+   <a href="https://github.com/StafLoker/btrfs-backup-debian-script/releases"><img src="https://img.shields.io/github/release-pre/StafLoker/btrfs-backup-debian-script.svg?style=flat" alt="latest version"/></a>
+   <a href="https://github.com/StafLoker/btrfs-backup-debian-script/blob/main/LICENSE"><img src="https://img.shields.io/github/license/StafLoker/btrfs-backup-debian-script.svg?style=flat" alt="license"/></a>
+
+   <p>A comprehensive backup solution for Debian-based systems using BTRFS snapshots. This script provides automated backups of PostgreSQL databases, system configurations, application data, SSL certificates, and Docker configurations with intelligent retention policies.</p>
+</div>
 
 ## **Features**
 
@@ -34,7 +46,7 @@ A comprehensive backup solution for Debian-based systems using BTRFS snapshots. 
 
 ### **Quick Installation**
 ```bash
-sudo bash <(curl -Ls "https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main/install.sh")
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main/install.sh)"
 ```
 
 ### **Manual Installation**
@@ -352,5 +364,4 @@ This project is released under the MIT License. See the [LICENSE](LICENSE) file 
 
 ---
 
-> [!IMPORTANT]
-> Always test your backup and recovery procedures in a safe environment before relying on them for production systems.
+**⚠️ Important**: Always test your backup and recovery procedures in a safe environment before relying on them for production systems.
