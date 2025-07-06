@@ -378,6 +378,210 @@ configure_nginx_infrastructure() {
         fi
     fi
 }
+
+# Function to configure services backup
+configure_services() {
+    log_info "Configuring services backup..."
+    
+    local existing_services=$(yq eval '.backups.services | length' "$CONFIG_FILE")
+    
+    if [[ $existing_services -eq 0 ]] || ask_yes_no "Do you want to add/configure services for backup?"; then
+        while true; do
+            echo
+            log_info "Configuring service backup..."
+            
+            # Get mandatory fields
+            read -p "Service label (mandatory, e.g., gitea): " service_label
+            if [[ -z "$service_label" ]]; then
+                log_warning "Service label is mandatory"
+                continue
+            fi
+            
+            read -p "Systemd service name (mandatory, e.g., gitea.service): " systemd_service
+            if [[ -z "$systemd_service" ]]; then
+                log_warning "Systemd service name is mandatory"
+                continue
+            fi
+            
+            # Remove .service suffix if present
+            systemd_service=${systemd_service%.service}
+            
+            # Check if service exists
+            if ! systemctl list-unit-files "${systemd_service}.service" &>/dev/null; then
+                log_warning "Warning: Service ${systemd_service}.service not found in systemctl"
+                if ! ask_yes_no "Do you want to continue anyway?"; then
+                    continue
+                fi
+            fi
+            
+            # Build service object starting with mandatory fields
+            local service_obj="{\"label\": \"$service_label\", \"systemd\": \"$systemd_service\""
+            
+            # Get optional fields
+            echo
+            log_info "Optional configurations for $service_label:"
+            
+            # Docker Compose configuration
+            if ask_yes_no "Does this service use Docker Compose?"; then
+                read -p "Docker Compose directory path (e.g., /opt/$service_label): " docker_compose_path
+                if [[ -n "$docker_compose_path" ]]; then
+                    if [[ -d "$docker_compose_path" ]]; then
+                        service_obj="${service_obj}, \"docker_compsose\": \"$docker_compose_path\""
+                        log_success "Docker Compose path added: $docker_compose_path"
+                    else
+                        log_warning "Directory $docker_compose_path does not exist"
+                        if ask_yes_no "Add it anyway?"; then
+                            service_obj="${service_obj}, \"docker_compsose\": \"$docker_compose_path\""
+                        fi
+                    fi
+                fi
+            fi
+            
+            # Configuration directory
+            if ask_yes_no "Does this service have a configuration directory to backup?"; then
+                read -p "Configuration directory path (e.g., /etc/$service_label): " config_path
+                if [[ -n "$config_path" ]]; then
+                    if [[ -d "$config_path" ]]; then
+                        service_obj="${service_obj}, \"config\": \"$config_path\""
+                        log_success "Configuration path added: $config_path"
+                    else
+                        log_warning "Directory $config_path does not exist"
+                        if ask_yes_no "Add it anyway?"; then
+                            service_obj="${service_obj}, \"config\": \"$config_path\""
+                        fi
+                    fi
+                fi
+            fi
+            
+            # Data configuration (files and/or database)
+            local has_data=false
+            if ask_yes_no "Does this service have data files to backup?"; then
+                read -p "Data files directory path (e.g., /var/lib/$service_label): " data_files_path
+                if [[ -n "$data_files_path" ]]; then
+                    if [[ -d "$data_files_path" ]]; then
+                        service_obj="${service_obj}, \"data\": {\"files\": \"$data_files_path\""
+                        has_data=true
+                        log_success "Data files path added: $data_files_path"
+                    else
+                        log_warning "Directory $data_files_path does not exist"
+                        if ask_yes_no "Add it anyway?"; then
+                            service_obj="${service_obj}, \"data\": {\"files\": \"$data_files_path\""
+                            has_data=true
+                        fi
+                    fi
+                fi
+            fi
+            
+            # PostgreSQL database
+            if ask_yes_no "Does this service use a PostgreSQL database?"; then
+                read -p "PostgreSQL database name (e.g., ${service_label}db): " pg_database
+                if [[ -n "$pg_database" ]]; then
+                    # Check if database exists
+                    if command -v sudo &>/dev/null && sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw "$pg_database" 2>/dev/null; then
+                        log_success "Database $pg_database found"
+                    else
+                        log_warning "Database $pg_database not found or PostgreSQL not accessible"
+                        if ! ask_yes_no "Add it anyway?"; then
+                            pg_database=""
+                        fi
+                    fi
+                    
+                    if [[ -n "$pg_database" ]]; then
+                        if [[ "$has_data" == "true" ]]; then
+                            service_obj="${service_obj}, \"pg-db\": \"$pg_database\"}"
+                        else
+                            service_obj="${service_obj}, \"data\": {\"pg-db\": \"$pg_database\"}"
+                            has_data=true
+                        fi
+                        log_success "PostgreSQL database added: $pg_database"
+                    fi
+                fi
+            fi
+            
+            # Close data object if it was opened
+            if [[ "$has_data" == "true" ]] && [[ "$service_obj" =~ \"data\".*\{[^}]*$ ]]; then
+                service_obj="${service_obj}}"
+            fi
+            
+            # Logs directory
+            if ask_yes_no "Does this service have logs to backup?"; then
+                read -p "Logs directory path (e.g., /var/log/$service_label): " logs_path
+                if [[ -n "$logs_path" ]]; then
+                    if [[ -d "$logs_path" ]]; then
+                        service_obj="${service_obj}, \"logs\": \"$logs_path\""
+                        log_success "Logs path added: $logs_path"
+                    else
+                        log_warning "Directory $logs_path does not exist"
+                        if ask_yes_no "Add it anyway?"; then
+                            service_obj="${service_obj}, \"logs\": \"$logs_path\""
+                        fi
+                    fi
+                fi
+            fi
+            
+            # Close service object
+            service_obj="${service_obj}}"
+            
+            # Validate that at least one optional field was added
+            if [[ ! "$service_obj" =~ (docker_compsose|config|data|logs) ]]; then
+                log_warning "Service $service_label has no backup components configured"
+                if ! ask_yes_no "Do you want to add it anyway?"; then
+                    continue
+                fi
+            fi
+            
+            # Add service to config
+            yq eval ".backups.services += [$service_obj]" -i "$CONFIG_FILE"
+            log_success "Service added: $service_label"
+            
+            # Show what was configured
+            echo
+            log_info "Service $service_label configuration:"
+            echo "  - Systemd service: $systemd_service"
+            if [[ "$service_obj" =~ \"docker_compsose\" ]]; then
+                local dc_path=$(echo "$service_obj" | grep -o '"docker_compsose": "[^"]*"' | cut -d'"' -f4)
+                echo "  - Docker Compose: $dc_path"
+            fi
+            if [[ "$service_obj" =~ \"config\" ]]; then
+                local cfg_path=$(echo "$service_obj" | grep -o '"config": "[^"]*"' | cut -d'"' -f4)
+                echo "  - Configuration: $cfg_path"
+            fi
+            if [[ "$service_obj" =~ \"files\" ]]; then
+                local files_path=$(echo "$service_obj" | grep -o '"files": "[^"]*"' | cut -d'"' -f4)
+                echo "  - Data files: $files_path"
+            fi
+            if [[ "$service_obj" =~ \"pg-db\" ]]; then
+                local db_name=$(echo "$service_obj" | grep -o '"pg-db": "[^"]*"' | cut -d'"' -f4)
+                echo "  - PostgreSQL DB: $db_name"
+            fi
+            if [[ "$service_obj" =~ \"logs\" ]]; then
+                local logs_path=$(echo "$service_obj" | grep -o '"logs": "[^"]*"' | cut -d'"' -f4)
+                echo "  - Logs: $logs_path"
+            fi
+            
+            if ! ask_yes_no "Do you want to add another service?"; then
+                break
+            fi
+        done
+        
+        log_success "Services configuration completed"
+    else
+        local service_count=$(yq eval '.backups.services | length' "$CONFIG_FILE")
+        log_info "Already have $service_count service(s) configured"
+        
+        # Show configured services
+        if [[ $service_count -gt 0 ]]; then
+            echo
+            log_info "Currently configured services:"
+            for ((i=0; i<service_count; i++)); do
+                local label=$(yq eval ".backups.services[$i].label" "$CONFIG_FILE")
+                local systemd=$(yq eval ".backups.services[$i].systemd" "$CONFIG_FILE")
+                echo "  - $label (systemd: $systemd)"
+            done
+        fi
+    fi
+}
+
 # Function to configure path backups
 configure_paths() {
     log_info "Configuring paths for backup..."
