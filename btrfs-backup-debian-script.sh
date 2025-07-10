@@ -589,7 +589,8 @@ backup_services() {
             mkdir -p "$db_backup_dir"
 
             if command -v pg_dump &>/dev/null; then
-                if sudo -u postgres pg_dump "$data_pg_db" >"$db_backup_dir/${data_pg_db}_${TIMESTAMP}.sql"; then
+                local db_dump_file="$db_backup_dir/${data_pg_db}_${TIMESTAMP}.sql"
+                if sudo -u postgres pg_dump "$data_pg_db" > "$db_dump_file"; then
                     log "INFO" "PostgreSQL database backup completed for $service_label: $data_pg_db"
                 else
                     handle_error "Failed to backup PostgreSQL database for $service_label: $data_pg_db"

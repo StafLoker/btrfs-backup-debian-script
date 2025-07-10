@@ -506,7 +506,7 @@ configure_services() {
                 fi
             else
                 # User service
-                read -p "User name (e.g., stefan): " user_name
+                read -p "User name (e.g., admin): " user_name
                 if [[ -z "$user_name" ]]; then
                     log_warning "User name is mandatory for user services"
                     continue
