@@ -11,7 +11,7 @@
    <a href="https://github.com/StafLoker/btrfs-backup-debian-script/releases"><img src="https://img.shields.io/github/release-pre/StafLoker/btrfs-backup-debian-script.svg?style=flat" alt="latest version"/></a>
    <a href="https://github.com/StafLoker/btrfs-backup-debian-script/blob/main/LICENSE"><img src="https://img.shields.io/github/license/StafLoker/btrfs-backup-debian-script.svg?style=flat" alt="license"/></a>
 
-   <p>A comprehensive backup solution for Debian-based systems using BTRFS snapshots. This script provides automated backups of PostgreSQL databases, system configurations, application data, SSL certificates, and service configurations with intelligent retention policies.</p>
+   <p>A comprehensive backup solution for Debian-based systems using BTRFS snapshots. This script provides automated backups of PostgreSQL databases, system configurations, application data, SSL certificates, service configurations, and enhanced support for both system and user services including Podman containers.</p>
 </div>
 
 ## **Install & Upgrade**
@@ -25,11 +25,14 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/StafLoker/btrfs-bac
 - 🔄 **Automated BTRFS Snapshots** - Daily, weekly, and monthly snapshots with configurable retention
 - 🗃️ **PostgreSQL Infrastructure Backup** - Complete database dumps including globals and individual databases
 - 🌐 **Nginx Infrastructure Backup** - Configuration and SSL certificates management
-- ⚙️ **Service Management Backup** - Complete service backup with Docker Compose, configurations, data, and logs
+- 🔴 **Redis Infrastructure Backup** - Configuration backup with duplication avoidance
+- 🔍 **Meilisearch Infrastructure Backup** - Configuration and data backup
+- ⚙️ **Enhanced Service Management** - Support for both system and user services (Podman containers)
+- 🐳 **Container Support** - Docker/Podman Compose backup with enhanced configuration
 - 📁 **Custom Path Backup** - Configurable paths with optional labels
 - 🔒 **System Configuration Backup** - Backs up `/etc` while excluding sensitive files and avoiding duplicates
 - 📱 **Telegram Notifications** - Real-time backup status and error notifications with disk usage info
-- 🛠️ **Automatic Service Management** - Stop/start services during backup to ensure data consistency
+- 🛠️ **Intelligent Service Management** - Stop/start services during backup including user services
 - 📊 **Intelligent Retention Policies** - Configurable cleanup of old snapshots
 - 🚀 **Easy Installation** - One-command setup with interactive configuration
 
@@ -41,6 +44,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/StafLoker/btrfs-bac
 - Internet connection for installation
 
 ### **Dependencies** (automatically installed)
+
 - `curl` - For downloading and API calls
 - `wget` - For file downloads
 - `sed` - Text processing
@@ -51,6 +55,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/StafLoker/btrfs-bac
 - `postgresql-client` (optional, for PostgreSQL backups)
 
 ## **Manual Installation**
+
 ```bash
 # Download the installer
 wget https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main/install.sh
@@ -63,11 +68,12 @@ sudo ./install.sh
 ```
 
 The installer will guide you through:
+
 1. **Dependency Installation** - Automatic detection and installation of required packages
 2. **Disk Configuration** - Setup of backup drives and mount points
 3. **Retention Policy Configuration** - Configuration of snapshot retention periods
-4. **Infrastructure Backup Configuration** - PostgreSQL and Nginx backup settings
-5. **Service Backup Configuration** - Individual service backup settings (Docker Compose, data, configs, logs)
+4. **Infrastructure Backup Configuration** - PostgreSQL, Nginx, Redis, and Meilisearch backup settings
+5. **Enhanced Service Backup Configuration** - System and user service backup settings (Docker/Podman Compose, data, configs, logs)
 6. **Path Backup Configuration** - Custom directories to backup
 7. **System Configuration** - /etc directory backup settings
 8. **Notifications Setup** - Optional Telegram bot configuration
@@ -76,6 +82,7 @@ The installer will guide you through:
 ## **Configuration**
 
 ### **Main Configuration File**
+
 Location: `/etc/btrfs-backup/config.yaml`
 
 ```yaml
@@ -93,51 +100,87 @@ notifications: true
 
 # Snapshot retention policies
 policy:
-  daily_retention: 7      # Keep 7 daily snapshots
-  weekly_retention: 4     # Keep 4 weekly snapshots (created on Sundays)
-  monthly_retention: 12   # Keep 12 monthly snapshots (created on 1st of month)
+  daily_retention: 7 # Keep 7 daily snapshots
+  weekly_retention: 4 # Keep 4 weekly snapshots (created on Sundays)
+  monthly_retention: 12 # Keep 12 monthly snapshots (created on 1st of month)
 
 backups:
   # Infrastructure services backup
   infrastructure:
     postgresql:
-      global: true        # Backup global configurations (roles, users)
-      all_db: true        # Backup all databases
-      config: true        # Backup /etc/postgresql (skipped if etc: true)
+      global: true # Backup global configurations (roles, users)
+      all_db: true # Backup all databases
+      config: true # Backup /etc/postgresql (skipped if etc: true)
     nginx:
-      config: true        # Backup /etc/nginx (skipped if etc: true)
-      certificates: true  # Backup SSL certificates from sites-available
+      config: true # Backup /etc/nginx (skipped if etc: true)
+      certificates: true # Backup SSL certificates from sites-available
+    redis:
+      config: true # Backup /etc/redis (skipped if etc: true)
+    meilisearch:
+      config: true # Backup /etc/meilisearch (skipped if etc: true)
+      data: true # Backup /var/lib/meilisearch
 
-  # Individual services backup
+  # Individual services backup (Enhanced format)
   services:
-    - label: gitea                    # Mandatory: Service identifier
-      systemd: gitea                  # Mandatory: Systemd service name
-      docker_compsose: /opt/gitea     # Optional: Docker Compose directory
-      config: /etc/gitea              # Optional: Configuration directory
+    # System service example (runs as root)
+    - label: gitea # Mandatory: Service identifier
+      systemd: # Enhanced systemd configuration
+        name: gitea # Mandatory: Systemd service name
+      containers: # Container configuration (replaces docker_compsose)
+        compose: /opt/gitea # Optional: Container compose directory
+      config: /etc/gitea # Optional: Configuration directory
       data:
-        files: /var/lib/gitea         # Optional: Data files directory
-        pg-db: giteadb               # Optional: PostgreSQL database name
-      logs: /var/log/gitea           # Optional: Logs directory
+        files: /var/lib/gitea # Optional: Data files directory
+        pg-db: giteadb # Optional: PostgreSQL database name
+      logs: /var/log/gitea # Optional: Logs directory
 
+    # User service example (Podman containers running as user)
     - label: linkwarden
-      systemd: linkwarden
-      docker_compsose: /opt/linkwarden
+      systemd:
+        name: podman-compose@linkwarden # User service name
+        podman: # Podman user configuration
+          user: admin # User name running the service
+          uid: 1000 # User ID
+      containers:
+        compose: /opt/linkwarden
       data:
         files: /var/lib/linkwarden
         pg-db: linkwardendb
 
+    # User service with multiple containers
+    - label: authentik
+      systemd:
+        name: podman-compose@authentik
+        podman:
+          user: admin
+          uid: 1000
+      containers:
+        compose: /opt/authentik
+      data:
+        files: /var/lib/authentik
+        pg-db: authentik
+
+    # System service without containers
+    - label: opencloud
+      systemd:
+        name: opencloud
+      config: /etc/opencloud
+      data:
+        files: /var/lib/opencloud
+
   # Custom paths backup
   paths:
-    - label: user_photos             # Mandatory: Path identifier
-      path: /home/user/photos        # Mandatory: Directory to backup
+    - label: user_photos # Mandatory: Path identifier
+      path: /home/user/photos # Mandatory: Directory to backup
     - label: documents
       path: /srv/documents
 
   # System configuration backup
-  etc: true  # Backup /etc directory (excludes sensitive files and duplicates from infrastructure/services)
+  etc: true # Backup /etc directory (excludes sensitive files and duplicates from infrastructure/services)
 ```
 
 ### **Environment Variables**
+
 Location: `/etc/btrfs-backup/.env`
 
 ```bash
@@ -145,9 +188,70 @@ TELEGRAM_BOT_TOKEN=your_bot_token_here
 TELEGRAM_CHAT_ID=your_chat_id_here
 ```
 
+## **Enhanced Service Management**
+
+### **System Services vs User Services**
+
+**System Services** (run as root):
+
+- Traditional systemd services
+- Services installed system-wide
+- Examples: nginx, postgresql, custom applications
+
+**User Services** (run as specific user):
+
+- Podman containers managed by systemctl --user
+- Services running in user session
+- Examples: podman-compose@linkwarden, podman-compose@authentik
+
+### **Service Types Configuration**
+
+#### **System Service Example**
+
+```yaml
+- label: gitea
+  systemd:
+    name: gitea
+  containers:
+    compose: /opt/gitea
+  config: /etc/gitea
+  data:
+    files: /var/lib/gitea
+    pg-db: giteadb
+```
+
+#### **User Service Example (Podman)**
+
+```yaml
+- label: linkwarden
+  systemd:
+    name: podman-compose@linkwarden
+    podman:
+      user: admin # User running the service
+      uid: 1000 # User ID for proper permission handling
+  containers:
+    compose: /opt/linkwarden
+  data:
+    files: /var/lib/linkwarden
+    pg-db: linkwardendb
+```
+
+### **Service Detection During Installation**
+
+The installer can automatically detect running user services:
+
+```bash
+# For user 'admin', it will show:
+Available user services:
+  - podman-compose@authentik.service
+  - podman-compose@linkwarden.service
+  - podman-compose@remnawave.service
+```
+
 ## **Usage**
 
 ### **Automatic Backups**
+
 The installer creates a systemd timer that runs backups automatically. By default, backups run daily at 4:00 AM.
 
 ```bash
@@ -159,6 +263,7 @@ sudo systemctl list-timers backup-$(hostname).timer
 ```
 
 ### **Manual Backup**
+
 ```bash
 # Run backup manually
 sudo /usr/local/bin/backup-$(hostname).sh
@@ -168,6 +273,7 @@ sudo systemctl start backup-$(hostname).service
 ```
 
 ### **View Logs**
+
 ```bash
 # View real-time logs
 sudo tail -f /var/log/backup_$(hostname).log
@@ -189,17 +295,26 @@ Each backup disk will have the following structure:
     │   │   │   ├── globals_timestamp.sql
     │   │   │   ├── database_timestamp.sql
     │   │   │   └── config/            # PostgreSQL configuration
-    │   │   └── nginx/                 # Nginx configuration and certificates
-    │   │       ├── config/            # Nginx configuration files
-    │   │       └── certificates/      # SSL certificates by site
+    │   │   ├── nginx/                 # Nginx configuration and certificates
+    │   │   │   ├── config/            # Nginx configuration files
+    │   │   │   └── certificates/      # SSL certificates by site
+    │   │   ├── redis/                 # Redis configuration
+    │   │   │   └── config/            # Redis configuration files
+    │   │   └── meilisearch/           # Meilisearch configuration and data
+    │   │       ├── config/            # Meilisearch configuration
+    │   │       └── data/              # Meilisearch data files
     │   ├── services/                   # Individual services
     │   │   ├── gitea/                 # Service-specific backups
-    │   │   │   ├── docker_compose/    # Docker Compose files
+    │   │   │   ├── containers_compose/ # Container compose files (renamed from docker_compose)
     │   │   │   ├── config/            # Service configuration
     │   │   │   ├── data_files/        # Service data files
     │   │   │   ├── database/          # Service database dumps
     │   │   │   └── logs/              # Service logs
-    │   │   └── linkwarden/
+    │   │   ├── linkwarden/            # User service backup
+    │   │   │   ├── containers_compose/ # Podman compose files
+    │   │   │   ├── data_files/        # Service data files
+    │   │   │   └── database/          # Service database dumps
+    │   │   └── authentik/             # Another user service
     │   ├── paths/                      # Custom paths
     │   │   ├── user_photos/           # Labeled custom directories
     │   │   └── documents/
@@ -212,24 +327,42 @@ Each backup disk will have the following structure:
 
 ## **Service Backup Details**
 
-### **Docker Compose Backup**
-When `docker_compsose` is specified, the script backs up:
+### **Enhanced Container Backup**
+
+When `containers.compose` is specified, the script backs up:
+
 - `docker-compose.yml` and `docker-compose.yaml` files
 - All `.env*` files
 - `Dockerfile`, `.dockerignore`
 - `docker-compose.override.yml/yaml` files
 
 ### **Service Management**
-- All services with `systemd` parameter are stopped before backup
-- Services are restarted after backup completion
-- Ensures data consistency during backup process
+
+- **System services**: Stopped/started using `systemctl`
+- **User services**: Stopped/started using `systemctl --user` as the specified user
+- **Service isolation**: Each service runs in proper user context
+- **Error handling**: Failed service operations are logged but don't stop backup
+
+### **User Service Execution**
+
+For user services, the script uses `runuser` to ensure proper execution context:
+
+```bash
+# Example: Stop user service
+runuser -l admin -c "systemctl --user stop 'podman-compose@linkwarden'"
+
+# Example: Start user service
+runuser -l admin -c "systemctl --user start 'podman-compose@linkwarden'"
+```
 
 ### **Database Backup**
+
 - PostgreSQL databases specified in `pg-db` are dumped individually
 - Global PostgreSQL backup includes roles and users
 - All database backups include timestamp in filename
 
 ### **Intelligent Duplication Avoidance**
+
 - If `etc: true` is enabled, service configs under `/etc/` are skipped
 - Infrastructure configs are skipped if covered by `/etc` backup
 - Prevents duplicate backups and saves storage space
@@ -237,12 +370,15 @@ When `docker_compsose` is specified, the script backs up:
 ## **Telegram Notifications**
 
 ### **Setup Instructions**
+
 1. **Create a Telegram Bot**:
+
    - Message @BotFather on Telegram
    - Send `/newbot` and follow instructions
    - Save the bot token
 
 2. **Get Your Chat ID**:
+
    - Send a message to your bot
    - Visit: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
    - Find your chat ID in the response
@@ -250,6 +386,7 @@ When `docker_compsose` is specified, the script backs up:
 3. **Configure During Installation** or manually edit `/etc/btrfs-backup/.env`
 
 ### **Notification Features**
+
 - **Success/Failure Status** with appropriate icons
 - **Backup Duration** timing information
 - **Disk Usage Information** for each backup disk
@@ -259,6 +396,7 @@ When `docker_compsose` is specified, the script backs up:
 ## **Management Commands**
 
 ### **Timer Management**
+
 ```bash
 # Enable/disable automatic backups
 sudo systemctl enable backup-$(hostname).timer   # Enable
@@ -270,6 +408,7 @@ sudo systemctl stop backup-$(hostname).timer     # Stop
 ```
 
 ### **Configuration Management**
+
 ```bash
 # Edit main configuration
 sudo nano /etc/btrfs-backup/config.yaml
@@ -281,7 +420,22 @@ sudo nano /etc/btrfs-backup/.env
 sudo systemctl daemon-reload
 ```
 
+### **User Service Management**
+
+```bash
+# Check user services (as the user)
+systemctl --user list-units --type=service
+
+# Check specific user service status
+sudo runuser -l admin -c "systemctl --user status podman-compose@linkwarden"
+
+# Manually stop/start user service
+sudo runuser -l admin -c "systemctl --user stop podman-compose@linkwarden"
+sudo runuser -l admin -c "systemctl --user start podman-compose@linkwarden"
+```
+
 ### **Snapshot Management**
+
 ```bash
 # List snapshots on a backup disk
 sudo btrfs subvolume list /mnt/backups/disk_1
@@ -293,6 +447,7 @@ sudo btrfs subvolume delete /mnt/backups/disk_1/hostname/snapshots/daily/2025010
 ## **Recovery**
 
 ### **File Recovery**
+
 ```bash
 # Browse snapshots
 ls /mnt/backups/disk_1/hostname/snapshots/daily/
@@ -302,6 +457,9 @@ sudo cp -r /mnt/backups/disk_1/hostname/snapshots/daily/20250101_040000/etc/ngin
 ```
 
 ### **Service Recovery**
+
+#### **System Service Recovery**
+
 ```bash
 # Restore service data
 sudo rsync -av /mnt/backups/disk_1/hostname/data/services/gitea/data_files/ /var/lib/gitea/
@@ -310,7 +468,20 @@ sudo rsync -av /mnt/backups/disk_1/hostname/data/services/gitea/data_files/ /var
 sudo rsync -av /mnt/backups/disk_1/hostname/data/services/gitea/config/ /etc/gitea/
 ```
 
+#### **User Service Recovery**
+
+```bash
+# Restore user service data (as root, then fix permissions)
+sudo rsync -av /mnt/backups/disk_1/hostname/data/services/linkwarden/data_files/ /var/lib/linkwarden/
+sudo chown -R admin:admin /var/lib/linkwarden/
+
+# Restore container compose files
+sudo rsync -av /mnt/backups/disk_1/hostname/data/services/linkwarden/containers_compose/ /opt/linkwarden/
+sudo chown -R admin:admin /opt/linkwarden/
+```
+
 ### **Database Recovery**
+
 ```bash
 # Restore PostgreSQL database
 sudo -u postgres psql < /mnt/backups/disk_1/hostname/data/infrastructure/postgresql/database_name_20250101_040000.sql
@@ -320,6 +491,7 @@ sudo -u postgres psql < /mnt/backups/disk_1/hostname/data/services/gitea/databas
 ```
 
 ### **Complete System Recovery**
+
 ```bash
 # Mount backup disk
 sudo mount /dev/sdc1 /mnt/recovery
@@ -332,7 +504,32 @@ sudo rsync -av /mnt/recovery/hostname/snapshots/daily/20250101_040000/etc/ /etc/
 
 ### **Common Issues**
 
+**User service fails to stop/start**:
+
+```bash
+# Check if user has systemd session
+sudo runuser -l admin -c "systemctl --user status"
+
+# Check specific service status
+sudo runuser -l admin -c "systemctl --user status podman-compose@linkwarden"
+
+# Check user service logs
+sudo runuser -l admin -c "journalctl --user -u podman-compose@linkwarden"
+```
+
+**Permission errors with user services**:
+
+```bash
+# Ensure user owns service directories
+sudo chown -R admin:admin /opt/linkwarden/
+sudo chown -R admin:admin /var/lib/linkwarden/
+
+# Check user ID matches configuration
+id admin
+```
+
 **Backup fails to mount disks**:
+
 ```bash
 # Check disk availability
 lsblk
@@ -344,14 +541,8 @@ cat /etc/fstab
 sudo mount /dev/sdc1 /mnt/backups/disk_1
 ```
 
-**Permission errors**:
-```bash
-# Ensure correct permissions
-sudo chown root:root /etc/btrfs-backup/.env
-sudo chmod 600 /etc/btrfs-backup/.env
-```
-
 **PostgreSQL backup fails**:
+
 ```bash
 # Check PostgreSQL is running
 sudo systemctl status postgresql
@@ -363,16 +554,8 @@ sudo -u postgres psql -l
 sudo apt-get install postgresql-client
 ```
 
-**Service fails to stop/start**:
-```bash
-# Check service status
-sudo systemctl status service_name
-
-# Check service logs
-sudo journalctl -u service_name
-```
-
 ### **Log Analysis**
+
 ```bash
 # Check for errors in logs
 sudo grep -i error /var/log/backup_$(hostname).log
@@ -387,23 +570,57 @@ sudo btrfs scrub status /mnt/backups/disk_1
 
 ## **Customization**
 
-### **Adding New Services**
+### **Adding New System Services**
+
 Edit `/etc/btrfs-backup/config.yaml`:
 
 ```yaml
 backups:
   services:
     - label: myservice
-      systemd: myservice.service
-      docker_compsose: /opt/myservice    # Optional
-      config: /etc/myservice             # Optional
+      systemd:
+        name: myservice
+      containers: # Optional
+        compose: /opt/myservice
+      config: /etc/myservice # Optional
       data:
-        files: /var/lib/myservice        # Optional
-        pg-db: myservicedb              # Optional
-      logs: /var/log/myservice           # Optional
+        files: /var/lib/myservice # Optional
+        pg-db: myservicedb # Optional
+      logs: /var/log/myservice # Optional
+```
+
+### **Adding New User Services**
+
+```yaml
+backups:
+  services:
+    - label: myapp
+      systemd:
+        name: podman-compose@myapp
+        podman:
+          user: admin
+          uid: 1000
+      containers:
+        compose: /opt/myapp
+      data:
+        files: /var/lib/myapp
+        pg-db: myappdb
+```
+
+### **Adding Infrastructure Services**
+
+```yaml
+backups:
+  infrastructure:
+    redis:
+      config: true # Backup /etc/redis
+    meilisearch:
+      config: true # Backup /etc/meilisearch
+      data: true # Backup /var/lib/meilisearch
 ```
 
 ### **Adding Custom Backup Paths**
+
 ```yaml
 backups:
   paths:
@@ -412,6 +629,7 @@ backups:
 ```
 
 ### **Changing Backup Schedule**
+
 Edit the systemd timer:
 
 ```bash
@@ -419,6 +637,7 @@ sudo systemctl edit backup-$(hostname).timer
 ```
 
 Add custom schedule:
+
 ```ini
 [Timer]
 OnCalendar=*-*-* 02:00:00  # 2:00 AM daily
@@ -426,57 +645,25 @@ OnCalendar=Sun *-*-* 03:00:00  # 3:00 AM on Sundays only
 ```
 
 ### **Custom Retention Policies**
+
 Edit `/etc/btrfs-backup/config.yaml`:
 
 ```yaml
 policy:
-  daily_retention: 14     # Keep 14 days
-  weekly_retention: 8     # Keep 8 weeks
-  monthly_retention: 24   # Keep 24 months
+  daily_retention: 14 # Keep 14 days
+  weekly_retention: 8 # Keep 8 weeks
+  monthly_retention: 24 # Keep 24 months
 ```
 
 ## **Security Notes**
 
 - **Environment File**: Ensure the `.env` file is not accessible to other users on the system. Use `chmod 600` to restrict permissions.
+- **User Service Security**: User services run with user permissions, providing better isolation
 - **Backup Encryption**: Consider encrypting backup drives for additional security
 - **Network Security**: If using network-attached storage, ensure secure connection
 - **Access Control**: Regularly review who has access to backup systems
 - **Key Rotation**: Periodically rotate Telegram bot tokens and other credentials
 - **Database Security**: PostgreSQL backups may contain sensitive data - secure backup locations appropriately
-
-## **Performance Optimization**
-
-### **Large Datasets**
-- Use multiple backup drives for parallel writes
-- Consider excluding cache directories and temporary files
-- Schedule backups during low-usage periods
-- Monitor disk I/O during backup operations
-
-### **Service Dependencies**
-- Configure service dependencies properly in systemd
-- Consider backup order for interconnected services
-- Use maintenance windows for critical service backups
-
-### **BTRFS Optimization**
-- Regular filesystem scrubbing: `sudo btrfs scrub start /mnt/backups/disk_1`
-- Monitor filesystem health: `sudo btrfs filesystem usage /mnt/backups/disk_1`
-- Consider compression for backup drives: `sudo mount -o compress=zstd /dev/sdc1 /mnt/backups/disk_1`
-
-## **Contributing**
-
-Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
-
-### **Development Setup**
-```bash
-# Clone the repository
-git clone https://github.com/StafLoker/btrfs-backup-debian-script.git
-
-# Make changes and test locally
-chmod +x install.sh backup.sh
-
-# Test installation
-sudo ./install.sh
-```
 
 ## **License**
 
