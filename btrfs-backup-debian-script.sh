@@ -110,6 +110,7 @@ handle_error() {
 }
 
 # Function to mount backup partitions
+# Function to mount backup partitions
 mount_backup_partitions() {
     log "INFO" "Mounting backup partitions..."
     
@@ -120,7 +121,7 @@ mount_backup_partitions() {
         local path=$(yq eval ".parts[$i].path" "$CONFIG_FILE")
         local dev=$(yq eval ".parts[$i].dev" "$CONFIG_FILE")
         
-        log "INFO" "Mounting $label: $dev -> $path"
+        log "INFO" "Mounting $label -> $path"
         
         # Create mount point if it doesn't exist
         mkdir -p "$path"
@@ -129,11 +130,32 @@ mount_backup_partitions() {
         if mountpoint -q "$path"; then
             log "INFO" "$label already mounted at $path"
         else
-            if mount "$dev" "$path"; then
-                log "INFO" "Successfully mounted $label"
+            # Try to mount using label first, fallback to device path if label fails
+            local mount_success=false
+            
+            # Attempt to mount using LABEL= syntax
+            if mount "LABEL=$label" "$path" 2>/dev/null; then
+                log "INFO" "Successfully mounted $label using label"
                 MOUNTED_DISKS+=("$path")
+                mount_success=true
             else
-                handle_error "Failed to mount $dev to $path"
+                log "WARNING" "Failed to mount using label '$label', trying device path '$dev'"
+                
+                # Fallback to device path
+                if [[ -n "$dev" ]] && [[ "$dev" != "null" ]]; then
+                    if mount "$dev" "$path"; then
+                        log "INFO" "Successfully mounted $label using device path $dev"
+                        MOUNTED_DISKS+=("$path")
+                        mount_success=true
+                    else
+                        handle_error "Failed to mount $dev to $path"
+                    fi
+                else
+                    handle_error "No valid device path specified for $label"
+                fi
+            fi
+            
+            if [[ "$mount_success" == "false" ]]; then
                 return 1
             fi
         fi
