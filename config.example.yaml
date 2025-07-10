@@ -23,11 +23,20 @@ backups:
     nginx:
       config: true # /etc/nginx
       certificates: true # certificates that used in sited-available
+    redis:
+      config: true # /etc/redis
+    meilisearch:
+      config: true # /etc/meilisearch
+      data: true # /var/lib/meilisearch
   services:
     - label: gitea # mandatory
-      systemd: gitea # mandatory
-      # at least one argument
-      docker_compsose: /opt/gitea # not mandatory (copy .yaml and *.env.* files)
+      systemd:
+        name: gitea
+        podman:
+          user: admin
+          uid: 1000
+      containers:
+        compose: /opt/gitea # not mandatory (copy .yaml and *.env.* files)
       config: /etc/gitea # not mandatory
       data:
        files: /var/lib/gitea # not mandatory
@@ -35,14 +44,20 @@ backups:
       logs: /var/log/gitea  # not mandatory
       
     - label: linkwarden
-      systemd: linkwarden 
-      docker_compsose: /opt/linkwarden
+      systemd: 
+        name: podman-compose@linkwarden
+        podman:
+          user: admin
+          uid: 1000
+      containers:
+        compose: /opt/linkwarden
       data:
        files: /var/lib/linkwarden
        pg-db: linkwardendb
     
     - label: opencloud
-      systemd: opencloud
+      systemd: 
+        name: opencloud
       config: /etc/opencloud
       data:
         files: /var/lib/opencloud
