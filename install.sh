@@ -731,22 +731,77 @@ configure_services() {
 }
 
 # Function to configure path backups
+# Function to configure path backups
 configure_paths() {
     log_info "Configuring paths for backup..."
 
     local existing_paths=$(yq eval '.backups.paths | length' "$CONFIG_FILE")
 
-    if [[ $existing_paths -eq 0 ]] || ask_yes_no "Do you want to add more paths for backup?"; then
+    # Show existing paths if any
+    if [[ $existing_paths -gt 0 ]]; then
+        echo
+        log_info "Currently configured paths:"
+        for ((i = 0; i < existing_paths; i++)); do
+            local label=$(yq eval ".backups.paths[$i].label" "$CONFIG_FILE")
+            local path=$(yq eval ".backups.paths[$i].path" "$CONFIG_FILE")
+            echo "  - $label: $path"
+        done
+        echo
+    fi
+
+    # Always ask if user wants to add paths (new or additional)
+    local question_text=""
+    if [[ $existing_paths -eq 0 ]]; then
+        question_text="Do you want to add paths for backup?"
+    else
+        question_text="Do you want to add more paths for backup?"
+    fi
+
+    if ask_yes_no "$question_text"; then
         while true; do
             echo
             read -p "Path to backup (e.g., /home/user/photos): " backup_path
 
             if [[ -n "$backup_path" ]]; then
+                # Check if path exists
+                if [[ -d "$backup_path" ]]; then
+                    log_success "Path exists: $backup_path"
+                elif [[ -e "$backup_path" ]]; then
+                    log_warning "Path exists but is not a directory: $backup_path"
+                    if ! ask_yes_no "Continue anyway?"; then
+                        continue
+                    fi
+                else
+                    log_warning "Path does not exist: $backup_path"
+                    if ! ask_yes_no "Add it anyway?"; then
+                        continue
+                    fi
+                fi
+
                 read -p "Label for this path (mandatory): " path_label
 
                 if [[ -z "$path_label" ]]; then
                     log_warning "Label is mandatory for paths"
                     continue
+                fi
+
+                # Check if label already exists
+                local label_exists=false
+                for ((i = 0; i < existing_paths; i++)); do
+                    local existing_label=$(yq eval ".backups.paths[$i].label" "$CONFIG_FILE")
+                    if [[ "$existing_label" == "$path_label" ]]; then
+                        label_exists=true
+                        break
+                    fi
+                done
+
+                if [[ "$label_exists" == "true" ]]; then
+                    log_warning "Label '$path_label' already exists"
+                    if ! ask_yes_no "Use a different label?"; then
+                        continue
+                    else
+                        continue
+                    fi
                 fi
 
                 # Build path object
@@ -755,12 +810,36 @@ configure_paths() {
                 # Add to config
                 yq eval ".backups.paths += [$path_obj]" -i "$CONFIG_FILE"
                 log_success "Path added: $backup_path (label: $path_label)"
+                
+                # Update existing_paths count for label checking
+                ((existing_paths++))
+            else
+                log_warning "Path cannot be empty"
+                continue
             fi
 
             if ! ask_yes_no "Do you want to add another path?"; then
                 break
             fi
         done
+
+        # Show final configuration
+        local final_paths=$(yq eval '.backups.paths | length' "$CONFIG_FILE")
+        if [[ $final_paths -gt 0 ]]; then
+            echo
+            log_success "Final paths configuration:"
+            for ((i = 0; i < final_paths; i++)); do
+                local label=$(yq eval ".backups.paths[$i].label" "$CONFIG_FILE")
+                local path=$(yq eval ".backups.paths[$i].path" "$CONFIG_FILE")
+                echo "  - $label: $path"
+            done
+        fi
+    else
+        if [[ $existing_paths -eq 0 ]]; then
+            log_info "No paths will be configured for backup"
+        else
+            log_info "Keeping existing $existing_paths path(s) configured"
+        fi
     fi
 }
 
@@ -785,27 +864,206 @@ configure_notifications() {
     log_info "Configuring notifications..."
 
     local current_notifications=$(yq eval '.notifications' "$CONFIG_FILE")
+    local env_exists=false
+    local current_bot_token=""
+    local current_chat_id=""
+    local config_complete=false
 
-    if [[ "$current_notifications" == "false" ]]; then
+    # Check if .env file exists and load current values
+    if [[ -f "$ENV_FILE" ]]; then
+        env_exists=true
+        log_info "Environment file exists: $ENV_FILE"
+        
+        # Load existing values
+        if [[ -s "$ENV_FILE" ]]; then
+            source "$ENV_FILE" 2>/dev/null || true
+            current_bot_token="${TELEGRAM_BOT_TOKEN:-}"
+            current_chat_id="${TELEGRAM_CHAT_ID:-}"
+            
+            # Check if configuration is complete
+            if [[ -n "$current_bot_token" && -n "$current_chat_id" ]]; then
+                config_complete=true
+            fi
+        fi
+    fi
+
+    # Show current configuration status
+    echo
+    log_info "Current notification configuration:"
+    echo "  - Notifications in config: $current_notifications"
+    echo "  - Environment file: $([ "$env_exists" == "true" ] && echo "exists" || echo "not found")"
+    
+    if [[ "$env_exists" == "true" ]]; then
+        if [[ -n "$current_bot_token" ]]; then
+            # Mask the token for security (show only first and last 4 characters)
+            local masked_token="${current_bot_token:0:4}...${current_bot_token: -4}"
+            echo "  - Bot token: $masked_token"
+        else
+            echo "  - Bot token: not configured"
+        fi
+        
+        if [[ -n "$current_chat_id" ]]; then
+            echo "  - Chat ID: $current_chat_id"
+        else
+            echo "  - Chat ID: not configured"
+        fi
+        
+        echo "  - Configuration: $([ "$config_complete" == "true" ] && echo "complete" || echo "incomplete")"
+    fi
+
+    # Determine what to do based on current state
+    if [[ "$current_notifications" == "true" && "$config_complete" == "true" ]]; then
+        echo
+        log_success "Telegram notifications are already fully configured"
+        
+        if ask_yes_no "Do you want to reconfigure Telegram notifications?"; then
+            configure_telegram_settings
+        else
+            log_info "Keeping existing notification configuration"
+            
+            # Test the current configuration if user wants
+            if ask_yes_no "Do you want to test the current notification configuration?"; then
+                test_telegram_notification
+            fi
+        fi
+        
+    elif [[ "$current_notifications" == "true" && "$config_complete" == "false" ]]; then
+        echo
+        log_warning "Notifications are enabled but configuration is incomplete"
+        
+        if ask_yes_no "Do you want to complete the Telegram configuration?"; then
+            configure_telegram_settings "$current_bot_token" "$current_chat_id"
+        else
+            log_warning "Notifications will not work properly without complete configuration"
+            if ask_yes_no "Do you want to disable notifications?"; then
+                yq eval '.notifications = false' -i "$CONFIG_FILE"
+                log_info "Notifications disabled in configuration"
+            fi
+        fi
+        
+    elif [[ "$current_notifications" == "false" ]]; then
+        echo
         if ask_yes_no "Do you want to enable Telegram notifications?"; then
             yq eval '.notifications = true' -i "$CONFIG_FILE"
+            configure_telegram_settings "$current_bot_token" "$current_chat_id"
+        else
+            log_info "Notifications will remain disabled"
+        fi
+        
+    else
+        log_warning "Unknown notification state, reconfiguring..."
+        configure_telegram_settings "$current_bot_token" "$current_chat_id"
+    fi
+}
 
-            echo
-            log_info "Configuring Telegram bot..."
-            read -p "Telegram bot token: " bot_token
-            read -p "Telegram chat ID: " chat_id
+# Helper function to configure Telegram settings
+configure_telegram_settings() {
+    local current_token="${1:-}"
+    local current_chat_id="${2:-}"
+    
+    echo
+    log_info "Configuring Telegram bot settings..."
+    echo
+    log_info "To get your Telegram bot token:"
+    echo "  1. Message @BotFather on Telegram"
+    echo "  2. Send /newbot and follow instructions"
+    echo "  3. Copy the token provided"
+    echo
+    log_info "To get your Chat ID:"
+    echo "  1. Send a message to your bot"
+    echo "  2. Visit: https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates"
+    echo "  3. Find 'chat':{'id': YOUR_CHAT_ID} in the response"
+    echo
 
-            # Create .env file
-            cat >"$ENV_FILE" <<EOF
+    local bot_token=""
+    local chat_id=""
+
+    # Get bot token
+    if [[ -n "$current_token" ]]; then
+        local masked_token="${current_token:0:4}...${current_token: -4}"
+        read -p "Telegram bot token [current: $masked_token]: " bot_token
+        bot_token=${bot_token:-$current_token}
+    else
+        while [[ -z "$bot_token" ]]; do
+            read -p "Telegram bot token (required): " bot_token
+            if [[ -z "$bot_token" ]]; then
+                log_warning "Bot token is required for Telegram notifications"
+            fi
+        done
+    fi
+
+    # Get chat ID
+    if [[ -n "$current_chat_id" ]]; then
+        read -p "Telegram chat ID [current: $current_chat_id]: " chat_id
+        chat_id=${chat_id:-$current_chat_id}
+    else
+        while [[ -z "$chat_id" ]]; do
+            read -p "Telegram chat ID (required): " chat_id
+            if [[ -z "$chat_id" ]]; then
+                log_warning "Chat ID is required for Telegram notifications"
+            fi
+        done
+    fi
+
+    # Validate inputs
+    if [[ -z "$bot_token" || -z "$chat_id" ]]; then
+        log_error "Both bot token and chat ID are required"
+        return 1
+    fi
+
+    # Create .env file
+    log_info "Creating environment file..."
+    cat >"$ENV_FILE" <<EOF
 TELEGRAM_BOT_TOKEN=$bot_token
 TELEGRAM_CHAT_ID=$chat_id
 EOF
 
-            chmod 600 "$ENV_FILE"
-            log_success "Telegram notifications configured"
+    chmod 600 "$ENV_FILE"
+    log_success "Telegram configuration saved to $ENV_FILE"
+
+    # Test the configuration
+    if ask_yes_no "Do you want to test the Telegram notification?"; then
+        test_telegram_notification "$bot_token" "$chat_id"
+    fi
+}
+
+# Helper function to test Telegram notification
+test_telegram_notification() {
+    local test_token="${1:-}"
+    local test_chat_id="${2:-}"
+    
+    # Use provided parameters or load from environment
+    if [[ -z "$test_token" || -z "$test_chat_id" ]]; then
+        if [[ -f "$ENV_FILE" ]]; then
+            source "$ENV_FILE" 2>/dev/null || true
+            test_token="${TELEGRAM_BOT_TOKEN:-}"
+            test_chat_id="${TELEGRAM_CHAT_ID:-}"
         fi
+    fi
+
+    if [[ -z "$test_token" || -z "$test_chat_id" ]]; then
+        log_error "Cannot test: missing bot token or chat ID"
+        return 1
+    fi
+
+    log_info "Testing Telegram notification..."
+    
+    local test_message="🧪 *Test Notification*%0A%0AThis is a test message from BTRFS Backup script on $(hostname).%0A%0ATime: $(date)%0A%0AIf you receive this message, notifications are working correctly! ✅"
+    local api_url="https://api.telegram.org/bot${test_token}/sendMessage"
+
+    if curl -s -X POST "$api_url" \
+        -d chat_id="$test_chat_id" \
+        -d text="$test_message" \
+        -d parse_mode="Markdown" >/dev/null; then
+        log_success "Test notification sent successfully!"
+        log_info "Check your Telegram to confirm you received the test message"
     else
-        log_info "Notifications already enabled"
+        log_error "Failed to send test notification"
+        log_warning "Please check your bot token and chat ID"
+        
+        if ask_yes_no "Do you want to reconfigure the Telegram settings?"; then
+            configure_telegram_settings
+        fi
     fi
 }
 
@@ -868,8 +1126,75 @@ EOF
 create_systemd_service() {
     log_info "Creating systemd service and timer..."
 
-    # Create service file
-    cat >"/etc/systemd/system/$SERVICE_NAME.service" <<EOF
+    local service_file="/etc/systemd/system/$SERVICE_NAME.service"
+    local timer_file="/etc/systemd/system/$SERVICE_NAME.timer"
+    local service_exists=false
+    local timer_exists=false
+    local current_schedule=""
+
+    # Check if service already exists
+    if [[ -f "$service_file" ]]; then
+        service_exists=true
+        log_info "Service file already exists: $service_file"
+    fi
+
+    # Check if timer already exists and get current schedule
+    if [[ -f "$timer_file" ]]; then
+        timer_exists=true
+        current_schedule=$(grep "OnCalendar=" "$timer_file" | cut -d'=' -f2 || echo "unknown")
+        log_info "Timer file already exists: $timer_file"
+        log_info "Current schedule: $current_schedule"
+    fi
+
+    # Show current status if both exist
+    if [[ "$service_exists" == "true" && "$timer_exists" == "true" ]]; then
+        echo
+        log_info "Current systemd configuration:"
+        echo "  - Service: $SERVICE_NAME.service (exists)"
+        echo "  - Timer: $SERVICE_NAME.timer (exists)"
+        echo "  - Schedule: $current_schedule"
+        
+        # Check if timer is enabled and running
+        local timer_enabled="disabled"
+        local timer_active="inactive"
+        
+        if systemctl is-enabled "$SERVICE_NAME.timer" &>/dev/null; then
+            timer_enabled="enabled"
+        fi
+        
+        if systemctl is-active "$SERVICE_NAME.timer" &>/dev/null; then
+            timer_active="active"
+        fi
+        
+        echo "  - Status: $timer_enabled, $timer_active"
+        echo
+
+        if ! ask_yes_no "Do you want to reconfigure the systemd service and timer?"; then
+            log_info "Keeping existing systemd configuration"
+            
+            # Ensure timer is enabled and started if not already
+            if [[ "$timer_enabled" == "disabled" ]]; then
+                log_info "Enabling timer..."
+                systemctl enable "$SERVICE_NAME.timer"
+            fi
+            
+            if [[ "$timer_active" == "inactive" ]]; then
+                log_info "Starting timer..."
+                systemctl start "$SERVICE_NAME.timer"
+            fi
+            
+            log_success "Systemd configuration verified"
+            return 0
+        fi
+        
+        # Stop timer before reconfiguration
+        log_info "Stopping existing timer for reconfiguration..."
+        systemctl stop "$SERVICE_NAME.timer" 2>/dev/null || true
+    fi
+
+    # Create or update service file
+    log_info "Creating/updating service file..."
+    cat >"$service_file" <<EOF
 [Unit]
 Description=BTRFS Backup Service for $(hostname)
 After=network.target postgresql.service docker.service
@@ -886,20 +1211,44 @@ WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=-$ENV_FILE
 EOF
 
-    # Ask for cron expression
+    if [[ "$service_exists" == "true" ]]; then
+        log_success "Service file updated"
+    else
+        log_success "Service file created"
+    fi
+
+    # Configure schedule
     echo
     log_info "Configuring backup schedule..."
     echo "Cron expression examples:"
     echo "  *-*-* 04:00:00    - Every day at 4:00 AM"
     echo "  *-*-* 02:30:00    - Every day at 2:30 AM"
     echo "  Sun *-*-* 03:00:00 - Every Sunday at 3:00 AM"
+    echo "  Mon,Wed,Fri *-*-* 06:00:00 - Monday, Wednesday, Friday at 6:00 AM"
     echo
 
-    read -p "Time expression for backup [*-*-* 04:00:00]: " cron_expression
-    cron_expression=${cron_expression:-"*-*-* 04:00:00"}
+    local default_schedule="*-*-* 04:00:00"
+    if [[ -n "$current_schedule" && "$current_schedule" != "unknown" ]]; then
+        default_schedule="$current_schedule"
+        echo "Current schedule: $current_schedule"
+    fi
 
-    # Create timer file
-    cat >"/etc/systemd/system/$SERVICE_NAME.timer" <<EOF
+    local cron_expression
+    read -p "Time expression for backup [$default_schedule]: " cron_expression
+    cron_expression=${cron_expression:-"$default_schedule"}
+
+    # Validate cron expression format (basic validation)
+    if [[ ! "$cron_expression" =~ ^[*0-9,-]+[[:space:]]+[*0-9:-]+$ ]]; then
+        log_warning "Cron expression format might be invalid: $cron_expression"
+        if ! ask_yes_no "Continue anyway?"; then
+            log_info "Using default schedule: $default_schedule"
+            cron_expression="$default_schedule"
+        fi
+    fi
+
+    # Create or update timer file
+    log_info "Creating/updating timer file..."
+    cat >"$timer_file" <<EOF
 [Unit]
 Description=Run $SERVICE_NAME.service at scheduled time
 Requires=$SERVICE_NAME.service
@@ -913,13 +1262,56 @@ RandomizedDelaySec=300
 WantedBy=timers.target
 EOF
 
-    # Reload systemd and enable timer
+    if [[ "$timer_exists" == "true" ]]; then
+        log_success "Timer file updated"
+    else
+        log_success "Timer file created"
+    fi
+
+    # Reload systemd daemon
+    log_info "Reloading systemd daemon..."
     systemctl daemon-reload
+
+    # Enable and start timer
+    log_info "Enabling and starting timer..."
     systemctl enable "$SERVICE_NAME.timer"
     systemctl start "$SERVICE_NAME.timer"
 
-    log_success "Service and timer created and enabled"
-    log_info "Timer scheduled for: $cron_expression"
+    # Verify timer status
+    if systemctl is-active "$SERVICE_NAME.timer" &>/dev/null; then
+        log_success "Timer is active and running"
+    else
+        log_warning "Timer might not be running properly"
+    fi
+
+    if systemctl is-enabled "$SERVICE_NAME.timer" &>/dev/null; then
+        log_success "Timer is enabled for automatic start"
+    else
+        log_warning "Timer is not enabled"
+    fi
+
+    # Show timer information
+    echo
+    log_success "Service and timer configured successfully"
+    log_info "Configuration details:"
+    echo "  - Service file: $service_file"
+    echo "  - Timer file: $timer_file"
+    echo "  - Schedule: $cron_expression"
+    echo "  - Status: enabled and active"
+    
+    # Show next scheduled run
+    local next_run=$(systemctl list-timers "$SERVICE_NAME.timer" --no-legend 2>/dev/null | awk '{print $1, $2}' || echo "unknown")
+    if [[ "$next_run" != "unknown" && -n "$next_run" ]]; then
+        echo "  - Next run: $next_run"
+    fi
+
+    echo
+    log_info "Useful commands:"
+    echo "  - Check timer status: systemctl status $SERVICE_NAME.timer"
+    echo "  - View next scheduled runs: systemctl list-timers $SERVICE_NAME.timer"
+    echo "  - Stop timer: systemctl stop $SERVICE_NAME.timer"
+    echo "  - Start timer: systemctl start $SERVICE_NAME.timer"
+    echo "  - Disable timer: systemctl disable $SERVICE_NAME.timer"
 }
 
 # Function to run initial backup
