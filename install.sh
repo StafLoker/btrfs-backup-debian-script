@@ -53,7 +53,7 @@ ask_yes_no() {
     local question="$1"
     local default="${2:-n}"
     local answer
-    
+
     while true; do
         if [[ "$default" == "y" ]]; then
             read -p "$question [Y/n]: " answer
@@ -62,11 +62,11 @@ ask_yes_no() {
             read -p "$question [y/N]: " answer
             answer=${answer:-n}
         fi
-        
+
         case ${answer,,} in
-            y|yes) return 0 ;;
-            n|no) return 1 ;;
-            *) log_warning "Please answer 'y' or 'n'" ;;
+        y | yes) return 0 ;;
+        n | no) return 1 ;;
+        *) log_warning "Please answer 'y' or 'n'" ;;
         esac
     done
 }
@@ -83,76 +83,76 @@ check_root() {
 # Function to check and install dependencies
 check_dependencies() {
     log_info "Checking dependencies..."
-    
+
     local dependencies=("curl" "wget" "sed" "tar" "yq" "rsync")
     local missing_deps=()
-    
+
     for cmd in "${dependencies[@]}"; do
         if ! command -v "$cmd" &>/dev/null; then
             missing_deps+=("$cmd")
         fi
     done
-    
+
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         log_warning "Missing dependencies: ${missing_deps[*]}"
-        
+
         if ask_yes_no "Do you want to install missing dependencies?" "y"; then
             log_info "Installing dependencies..."
             apt-get update
-            
+
             for dep in "${missing_deps[@]}"; do
                 case "$dep" in
-                    "yq")
-                        log_info "Installing the correct yq version (mikefarah/yq)..."
-                        
-                        # Detect architecture
-                        local ARCH=$(uname -m)
-                        local YQ_VERSION="v4.45.4"
-                        local YQ_BINARY
-                        
-                        case $ARCH in
-                            x86_64)
-                                YQ_BINARY="yq_linux_amd64"
-                                ;;
-                            aarch64|arm64)
-                                YQ_BINARY="yq_linux_arm64"
-                                ;;
-                            armv7l|armv6l)
-                                YQ_BINARY="yq_linux_arm"
-                                ;;
-                            i386|i686)
-                                YQ_BINARY="yq_linux_386"
-                                ;;
-                            *)
-                                log_error "Unsupported architecture: $ARCH"
-                                exit 1
-                                ;;
-                        esac
-                        
-                        log_info "Detected architecture: $ARCH"
-                        log_info "Downloading yq ${YQ_VERSION} (${YQ_BINARY})..."
-                        wget -O /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
-                        chmod +x /usr/local/bin/yq
-                        
-                        # Verify installation
-                        if /usr/local/bin/yq --version &>/dev/null; then
-                            log_success "yq installed successfully"
-                        else
-                            log_error "Failed to install yq"
-                            exit 1
-                        fi
+                "yq")
+                    log_info "Installing the correct yq version (mikefarah/yq)..."
+
+                    # Detect architecture
+                    local ARCH=$(uname -m)
+                    local YQ_VERSION="v4.45.4"
+                    local YQ_BINARY
+
+                    case $ARCH in
+                    x86_64)
+                        YQ_BINARY="yq_linux_amd64"
                         ;;
-                    "btrfs")
-                        log_info "Installing btrfs-progs..."
-                        apt-get install -y btrfs-progs
+                    aarch64 | arm64)
+                        YQ_BINARY="yq_linux_arm64"
+                        ;;
+                    armv7l | armv6l)
+                        YQ_BINARY="yq_linux_arm"
+                        ;;
+                    i386 | i686)
+                        YQ_BINARY="yq_linux_386"
                         ;;
                     *)
-                        log_info "Installing $dep..."
-                        apt-get install -y "$dep"
+                        log_error "Unsupported architecture: $ARCH"
+                        exit 1
                         ;;
+                    esac
+
+                    log_info "Detected architecture: $ARCH"
+                    log_info "Downloading yq ${YQ_VERSION} (${YQ_BINARY})..."
+                    wget -O /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
+                    chmod +x /usr/local/bin/yq
+
+                    # Verify installation
+                    if /usr/local/bin/yq --version &>/dev/null; then
+                        log_success "yq installed successfully"
+                    else
+                        log_error "Failed to install yq"
+                        exit 1
+                    fi
+                    ;;
+                "btrfs")
+                    log_info "Installing btrfs-progs..."
+                    apt-get install -y btrfs-progs
+                    ;;
+                *)
+                    log_info "Installing $dep..."
+                    apt-get install -y "$dep"
+                    ;;
                 esac
             done
-            
+
             log_success "Dependencies installed successfully"
         else
             log_error "Cannot continue without dependencies. Aborting installation."
@@ -166,14 +166,14 @@ check_dependencies() {
 # Function to initialize config structure
 init_config() {
     log_info "Initializing configuration..."
-    
+
     # Create config directory
     mkdir -p "$CONFIG_DIR"
-    
+
     # Create basic config if it doesn't exist
     if [[ ! -f "$CONFIG_FILE" ]]; then
         log_info "Creating initial configuration file..."
-        cat > "$CONFIG_FILE" <<EOF
+        cat >"$CONFIG_FILE" <<EOF
 parts: []
 notifications: false
 policy:
@@ -189,6 +189,11 @@ backups:
     nginx:
       config: false
       certificates: false
+    redis:
+      config: false
+    meilisearch:
+      config: false
+      data: false
   services: []
   paths: []
   etc: false
@@ -202,37 +207,37 @@ EOF
 # Function to configure backup parts (disks)
 configure_parts() {
     log_info "Configuring backup disks..."
-    
+
     # Get existing parts
     local existing_parts=$(yq eval '.parts | length' "$CONFIG_FILE")
-    
+
     if [[ $existing_parts -eq 0 ]]; then
         log_info "No disks configured. Setting up backup disks..."
-        
+
         local parts_array=""
         local part_count=1
-        
+
         while true; do
             echo
             log_info "Configuring backup disk #$part_count"
-            
+
             read -p "Disk label (e.g., backup_1): " label
             read -p "Mount path (e.g., /mnt/backups/disk_1): " path
             read -p "Device (e.g., /dev/sdc1): " dev
-            
+
             # Add to parts array
             if [[ -n "$parts_array" ]]; then
                 parts_array="${parts_array}, "
             fi
             parts_array="${parts_array}{\"label\": \"$label\", \"path\": \"$path\", \"dev\": \"$dev\"}"
-            
+
             if ! ask_yes_no "Do you want to add another backup disk?"; then
                 break
             fi
-            
+
             ((part_count++))
         done
-        
+
         # Update config
         yq eval ".parts = [$parts_array]" -i "$CONFIG_FILE"
         log_success "Backup disks configured"
@@ -244,19 +249,19 @@ configure_parts() {
 # Function to mount and verify disks
 mount_and_verify_disks() {
     log_info "Verifying and mounting disks..."
-    
+
     local parts_count=$(yq eval '.parts | length' "$CONFIG_FILE")
-    
-    for ((i=0; i<parts_count; i++)); do
+
+    for ((i = 0; i < parts_count; i++)); do
         local label=$(yq eval ".parts[$i].label" "$CONFIG_FILE")
         local path=$(yq eval ".parts[$i].path" "$CONFIG_FILE")
         local dev=$(yq eval ".parts[$i].dev" "$CONFIG_FILE")
-        
+
         log_info "Processing disk: $label ($dev -> $path)"
-        
+
         # Create mount point
         mkdir -p "$path"
-        
+
         # Check if already mounted
         if ! mountpoint -q "$path"; then
             log_info "Mounting $dev to $path..."
@@ -267,26 +272,26 @@ mount_and_verify_disks() {
         else
             log_info "Disk already mounted at $path"
         fi
-        
+
         # Verify and create directory structure
         local host_dir="${path}/${HOSTNAME}"
         local data_dir="${host_dir}/data"
         local snapshots_dir="${host_dir}/snapshots"
-        
+
         log_info "Creating directory structure for $label..."
-        
+
         # Create host directory
         mkdir -p "$host_dir"
-        
+
         # Create data subvolume if it doesn't exist
         if [[ ! -d "$data_dir" ]]; then
             log_info "Creating data subvolume: $data_dir"
             btrfs subvolume create "$data_dir"
         fi
-        
+
         # Create snapshots directories
         mkdir -p "$snapshots_dir"/{daily,weekly,monthly}
-        
+
         log_success "Directory structure created for $label"
     done
 }
@@ -294,26 +299,26 @@ mount_and_verify_disks() {
 # Function to configure retention policy
 configure_policy() {
     log_info "Configuring retention policy..."
-    
+
     local current_daily=$(yq eval '.policy.daily_retention' "$CONFIG_FILE")
     local current_weekly=$(yq eval '.policy.weekly_retention' "$CONFIG_FILE")
     local current_monthly=$(yq eval '.policy.monthly_retention' "$CONFIG_FILE")
-    
+
     log_info "Current configuration - Daily: $current_daily, Weekly: $current_weekly, Monthly: $current_monthly"
-    
+
     if ask_yes_no "Do you want to change the retention policy?"; then
         read -p "Daily retention (days) [$current_daily]: " daily
-        read -p "Weekly retention (weeks) [$current_weekly]: " weekly  
+        read -p "Weekly retention (weeks) [$current_weekly]: " weekly
         read -p "Monthly retention (months) [$current_monthly]: " monthly
-        
+
         daily=${daily:-$current_daily}
         weekly=${weekly:-$current_weekly}
         monthly=${monthly:-$current_monthly}
-        
+
         yq eval ".policy.daily_retention = $daily" -i "$CONFIG_FILE"
         yq eval ".policy.weekly_retention = $weekly" -i "$CONFIG_FILE"
         yq eval ".policy.monthly_retention = $monthly" -i "$CONFIG_FILE"
-        
+
         log_success "Retention policy updated"
     fi
 }
@@ -321,29 +326,29 @@ configure_policy() {
 # Function to configure PostgreSQL infrastructure
 configure_postgresql_infrastructure() {
     log_info "Configuring PostgreSQL infrastructure..."
-    
+
     local current_global=$(yq eval '.backups.infrastructure.postgresql.global // false' "$CONFIG_FILE")
     local current_all_db=$(yq eval '.backups.infrastructure.postgresql.all_db // false' "$CONFIG_FILE")
     local current_config=$(yq eval '.backups.infrastructure.postgresql.config // false' "$CONFIG_FILE")
-    
+
     log_info "Current PostgreSQL configuration:"
     log_info "  Global backup: $current_global"
     log_info "  All databases: $current_all_db"
     log_info "  Configuration: $current_config"
-    
+
     if ask_yes_no "Do you want to configure PostgreSQL infrastructure backup?"; then
         # Configure global backup
         if ask_yes_no "Enable PostgreSQL global backup (roles, users)?"; then
             yq eval '.backups.infrastructure.postgresql.global = true' -i "$CONFIG_FILE"
             log_success "PostgreSQL global backup enabled"
         fi
-        
+
         # Configure all databases backup
         if ask_yes_no "Enable backup of all PostgreSQL databases?"; then
             yq eval '.backups.infrastructure.postgresql.all_db = true' -i "$CONFIG_FILE"
             log_success "PostgreSQL all databases backup enabled"
         fi
-        
+
         # Configure configuration backup
         if ask_yes_no "Enable PostgreSQL configuration backup (/etc/postgresql)?"; then
             yq eval '.backups.infrastructure.postgresql.config = true' -i "$CONFIG_FILE"
@@ -355,21 +360,21 @@ configure_postgresql_infrastructure() {
 # Function to configure Nginx infrastructure
 configure_nginx_infrastructure() {
     log_info "Configuring Nginx infrastructure..."
-    
+
     local current_config=$(yq eval '.backups.infrastructure.nginx.config // false' "$CONFIG_FILE")
     local current_certs=$(yq eval '.backups.infrastructure.nginx.certificates // false' "$CONFIG_FILE")
-    
+
     log_info "Current Nginx configuration:"
     log_info "  Configuration backup: $current_config"
     log_info "  Certificates backup: $current_certs"
-    
+
     if ask_yes_no "Do you want to configure Nginx infrastructure backup?"; then
         # Configure configuration backup
         if ask_yes_no "Enable Nginx configuration backup (/etc/nginx)?"; then
             yq eval '.backups.infrastructure.nginx.config = true' -i "$CONFIG_FILE"
             log_success "Nginx configuration backup enabled"
         fi
-        
+
         # Configure certificates backup
         if ask_yes_no "Enable Nginx certificates backup (from sites-available)?"; then
             yq eval '.backups.infrastructure.nginx.certificates = true' -i "$CONFIG_FILE"
@@ -379,64 +384,194 @@ configure_nginx_infrastructure() {
     fi
 }
 
+# Function to configure Redis infrastructure
+configure_redis_infrastructure() {
+    log_info "Configuring Redis infrastructure..."
+
+    local current_config=$(yq eval '.backups.infrastructure.redis.config // false' "$CONFIG_FILE")
+
+    log_info "Current Redis configuration:"
+    log_info "  Configuration backup: $current_config"
+
+    if ask_yes_no "Do you want to configure Redis infrastructure backup?"; then
+        if ask_yes_no "Enable Redis configuration backup (/etc/redis)?"; then
+            yq eval '.backups.infrastructure.redis.config = true' -i "$CONFIG_FILE"
+            log_success "Redis configuration backup enabled"
+        fi
+    fi
+}
+
+# Function to configure Meilisearch infrastructure
+configure_meilisearch_infrastructure() {
+    log_info "Configuring Meilisearch infrastructure..."
+
+    local current_config=$(yq eval '.backups.infrastructure.meilisearch.config // false' "$CONFIG_FILE")
+    local current_data=$(yq eval '.backups.infrastructure.meilisearch.data // false' "$CONFIG_FILE")
+
+    log_info "Current Meilisearch configuration:"
+    log_info "  Configuration backup: $current_config"
+    log_info "  Data backup: $current_data"
+
+    if ask_yes_no "Do you want to configure Meilisearch infrastructure backup?"; then
+        if ask_yes_no "Enable Meilisearch configuration backup (/etc/meilisearch)?"; then
+            yq eval '.backups.infrastructure.meilisearch.config = true' -i "$CONFIG_FILE"
+            log_success "Meilisearch configuration backup enabled"
+        fi
+
+        if ask_yes_no "Enable Meilisearch data backup (/var/lib/meilisearch)?"; then
+            yq eval '.backups.infrastructure.meilisearch.data = true' -i "$CONFIG_FILE"
+            log_success "Meilisearch data backup enabled"
+        fi
+    fi
+}
+
+# Function to detect user services
+detect_user_services() {
+    local user_name="$1"
+    local uid="$2"
+
+    log_info "Detecting user services for user: $user_name (UID: $uid)"
+
+    # Get user services using runuser to ensure proper environment
+    local user_services
+    if user_services=$(runuser -l "$user_name" -c "systemctl --user list-units --type=service --state=running --no-legend" 2>/dev/null); then
+        if [[ -n "$user_services" ]]; then
+            echo "Available user services for $user_name:"
+            echo "$user_services" | awk '{print "  - " $1}'
+            return 0
+        else
+            log_info "No running user services found for $user_name"
+            return 1
+        fi
+    else
+        log_warning "Could not retrieve user services for $user_name"
+        return 1
+    fi
+}
+
 # Function to configure services backup
 configure_services() {
     log_info "Configuring services backup..."
-    
+
     local existing_services=$(yq eval '.backups.services | length' "$CONFIG_FILE")
-    
+
     if [[ $existing_services -eq 0 ]] || ask_yes_no "Do you want to add/configure services for backup?"; then
         while true; do
             echo
             log_info "Configuring service backup..."
-            
+
             # Get mandatory fields
             read -p "Service label (mandatory, e.g., gitea): " service_label
             if [[ -z "$service_label" ]]; then
                 log_warning "Service label is mandatory"
                 continue
             fi
-            
-            read -p "Systemd service name (mandatory, e.g., gitea.service): " systemd_service
-            if [[ -z "$systemd_service" ]]; then
-                log_warning "Systemd service name is mandatory"
-                continue
-            fi
-            
-            # Remove .service suffix if present
-            systemd_service=${systemd_service%.service}
-            
-            # Check if service exists
-            if ! systemctl list-unit-files "${systemd_service}.service" &>/dev/null; then
-                log_warning "Warning: Service ${systemd_service}.service not found in systemctl"
-                if ! ask_yes_no "Do you want to continue anyway?"; then
+
+            echo
+            log_info "Service type selection:"
+            echo "1. System service (runs as root)"
+            echo "2. User service (runs as specific user, e.g., Podman containers)"
+
+            local service_type
+            while true; do
+                read -p "Select service type [1-2]: " service_type
+                case "$service_type" in
+                1) break ;;
+                2) break ;;
+                *) log_warning "Please select 1 or 2" ;;
+                esac
+            done
+
+            local systemd_service=""
+            local user_name=""
+            local uid=""
+
+            if [[ "$service_type" == "1" ]]; then
+                # System service
+                read -p "Systemd service name (e.g., gitea.service): " systemd_service
+                if [[ -z "$systemd_service" ]]; then
+                    log_warning "Systemd service name is mandatory"
                     continue
                 fi
+
+                # Remove .service suffix if present
+                systemd_service=${systemd_service%.service}
+
+                # Check if service exists
+                if ! systemctl list-unit-files "${systemd_service}.service" &>/dev/null; then
+                    log_warning "Warning: Service ${systemd_service}.service not found in systemctl"
+                    if ! ask_yes_no "Do you want to continue anyway?"; then
+                        continue
+                    fi
+                fi
+            else
+                # User service
+                read -p "User name (e.g., stefan): " user_name
+                if [[ -z "$user_name" ]]; then
+                    log_warning "User name is mandatory for user services"
+                    continue
+                fi
+
+                # Check if user exists and get UID
+                if ! id "$user_name" &>/dev/null; then
+                    log_warning "User $user_name does not exist"
+                    continue
+                fi
+
+                uid=$(id -u "$user_name")
+                log_info "User $user_name found with UID: $uid"
+
+                # Try to detect user services
+                echo
+                if detect_user_services "$user_name" "$uid"; then
+                    echo
+                fi
+
+                read -p "User systemd service name (e.g., podman-compose@linkwarden): " systemd_service
+                if [[ -z "$systemd_service" ]]; then
+                    log_warning "Systemd service name is mandatory"
+                    continue
+                fi
+
+                # Check if user service exists
+                if ! runuser -l "$user_name" -c "systemctl --user list-unit-files '$systemd_service.service'" &>/dev/null 2>&1; then
+                    log_warning "Warning: User service $systemd_service.service not found for user $user_name"
+                    if ! ask_yes_no "Do you want to continue anyway?"; then
+                        continue
+                    fi
+                fi
             fi
-            
+
             # Build service object starting with mandatory fields
-            local service_obj="{\"label\": \"$service_label\", \"systemd\": \"$systemd_service\""
-            
+            local service_obj=""
+            if [[ "$service_type" == "1" ]]; then
+                # System service format
+                service_obj="{\"label\": \"$service_label\", \"systemd\": {\"name\": \"$systemd_service\"}"
+            else
+                # User service format
+                service_obj="{\"label\": \"$service_label\", \"systemd\": {\"name\": \"$systemd_service\", \"podman\": {\"user\": \"$user_name\", \"uid\": $uid}}"
+            fi
+
             # Get optional fields
             echo
             log_info "Optional configurations for $service_label:"
-            
-            # Docker Compose configuration
-            if ask_yes_no "Does this service use Docker Compose?"; then
-                read -p "Docker Compose directory path (e.g., /opt/$service_label): " docker_compose_path
-                if [[ -n "$docker_compose_path" ]]; then
-                    if [[ -d "$docker_compose_path" ]]; then
-                        service_obj="${service_obj}, \"docker_compsose\": \"$docker_compose_path\""
-                        log_success "Docker Compose path added: $docker_compose_path"
+
+            # Container configuration (replaces docker_compose)
+            if ask_yes_no "Does this service use containers (Docker/Podman Compose)?"; then
+                read -p "Container compose directory path (e.g., /opt/$service_label): " compose_path
+                if [[ -n "$compose_path" ]]; then
+                    if [[ -d "$compose_path" ]]; then
+                        service_obj="${service_obj}, \"containers\": {\"compose\": \"$compose_path\"}"
+                        log_success "Container compose path added: $compose_path"
                     else
-                        log_warning "Directory $docker_compose_path does not exist"
+                        log_warning "Directory $compose_path does not exist"
                         if ask_yes_no "Add it anyway?"; then
-                            service_obj="${service_obj}, \"docker_compsose\": \"$docker_compose_path\""
+                            service_obj="${service_obj}, \"containers\": {\"compose\": \"$compose_path\"}"
                         fi
                     fi
                 fi
             fi
-            
+
             # Configuration directory
             if ask_yes_no "Does this service have a configuration directory to backup?"; then
                 read -p "Configuration directory path (e.g., /etc/$service_label): " config_path
@@ -452,7 +587,7 @@ configure_services() {
                     fi
                 fi
             fi
-            
+
             # Data configuration (files and/or database)
             local has_data=false
             if ask_yes_no "Does this service have data files to backup?"; then
@@ -471,7 +606,7 @@ configure_services() {
                     fi
                 fi
             fi
-            
+
             # PostgreSQL database
             if ask_yes_no "Does this service use a PostgreSQL database?"; then
                 read -p "PostgreSQL database name (e.g., ${service_label}db): " pg_database
@@ -485,7 +620,7 @@ configure_services() {
                             pg_database=""
                         fi
                     fi
-                    
+
                     if [[ -n "$pg_database" ]]; then
                         if [[ "$has_data" == "true" ]]; then
                             service_obj="${service_obj}, \"pg-db\": \"$pg_database\"}"
@@ -497,12 +632,12 @@ configure_services() {
                     fi
                 fi
             fi
-            
+
             # Close data object if it was opened
             if [[ "$has_data" == "true" ]] && [[ "$service_obj" =~ \"data\".*\{[^}]*$ ]]; then
                 service_obj="${service_obj}}"
             fi
-            
+
             # Logs directory
             if ask_yes_no "Does this service have logs to backup?"; then
                 read -p "Logs directory path (e.g., /var/log/$service_label): " logs_path
@@ -518,29 +653,37 @@ configure_services() {
                     fi
                 fi
             fi
-            
+
             # Close service object
             service_obj="${service_obj}}"
-            
+
             # Validate that at least one optional field was added
-            if [[ ! "$service_obj" =~ (docker_compsose|config|data|logs) ]]; then
+            if [[ ! "$service_obj" =~ (containers|config|data|logs) ]]; then
                 log_warning "Service $service_label has no backup components configured"
                 if ! ask_yes_no "Do you want to add it anyway?"; then
                     continue
                 fi
             fi
-            
+
             # Add service to config
             yq eval ".backups.services += [$service_obj]" -i "$CONFIG_FILE"
             log_success "Service added: $service_label"
-            
+
             # Show what was configured
             echo
             log_info "Service $service_label configuration:"
-            echo "  - Systemd service: $systemd_service"
-            if [[ "$service_obj" =~ \"docker_compsose\" ]]; then
-                local dc_path=$(echo "$service_obj" | grep -o '"docker_compsose": "[^"]*"' | cut -d'"' -f4)
-                echo "  - Docker Compose: $dc_path"
+            if [[ "$service_type" == "1" ]]; then
+                echo "  - Type: System service"
+                echo "  - Systemd service: $systemd_service"
+            else
+                echo "  - Type: User service"
+                echo "  - Systemd service: $systemd_service"
+                echo "  - User: $user_name (UID: $uid)"
+            fi
+
+            if [[ "$service_obj" =~ \"compose\" ]]; then
+                local comp_path=$(echo "$service_obj" | grep -o '"compose": "[^"]*"' | cut -d'"' -f4)
+                echo "  - Container Compose: $comp_path"
             fi
             if [[ "$service_obj" =~ \"config\" ]]; then
                 local cfg_path=$(echo "$service_obj" | grep -o '"config": "[^"]*"' | cut -d'"' -f4)
@@ -558,25 +701,30 @@ configure_services() {
                 local logs_path=$(echo "$service_obj" | grep -o '"logs": "[^"]*"' | cut -d'"' -f4)
                 echo "  - Logs: $logs_path"
             fi
-            
+
             if ! ask_yes_no "Do you want to add another service?"; then
                 break
             fi
         done
-        
+
         log_success "Services configuration completed"
     else
         local service_count=$(yq eval '.backups.services | length' "$CONFIG_FILE")
         log_info "Already have $service_count service(s) configured"
-        
+
         # Show configured services
         if [[ $service_count -gt 0 ]]; then
             echo
             log_info "Currently configured services:"
-            for ((i=0; i<service_count; i++)); do
+            for ((i = 0; i < service_count; i++)); do
                 local label=$(yq eval ".backups.services[$i].label" "$CONFIG_FILE")
-                local systemd=$(yq eval ".backups.services[$i].systemd" "$CONFIG_FILE")
-                echo "  - $label (systemd: $systemd)"
+                local systemd_name=$(yq eval ".backups.services[$i].systemd.name" "$CONFIG_FILE")
+                local user=$(yq eval ".backups.services[$i].systemd.podman.user // \"system\"" "$CONFIG_FILE")
+                if [[ "$user" == "system" || "$user" == "null" ]]; then
+                    echo "  - $label (systemd: $systemd_name, type: system)"
+                else
+                    echo "  - $label (systemd: $systemd_name, user: $user)"
+                fi
             done
         fi
     fi
@@ -585,30 +733,30 @@ configure_services() {
 # Function to configure path backups
 configure_paths() {
     log_info "Configuring paths for backup..."
-    
+
     local existing_paths=$(yq eval '.backups.paths | length' "$CONFIG_FILE")
-    
+
     if [[ $existing_paths -eq 0 ]] || ask_yes_no "Do you want to add more paths for backup?"; then
         while true; do
             echo
             read -p "Path to backup (e.g., /home/user/photos): " backup_path
-            
+
             if [[ -n "$backup_path" ]]; then
                 read -p "Label for this path (mandatory): " path_label
-                
+
                 if [[ -z "$path_label" ]]; then
                     log_warning "Label is mandatory for paths"
                     continue
                 fi
-                
+
                 # Build path object
                 local path_obj="{\"label\": \"$path_label\", \"path\": \"$backup_path\"}"
-                
+
                 # Add to config
                 yq eval ".backups.paths += [$path_obj]" -i "$CONFIG_FILE"
                 log_success "Path added: $backup_path (label: $path_label)"
             fi
-            
+
             if ! ask_yes_no "Do you want to add another path?"; then
                 break
             fi
@@ -619,9 +767,9 @@ configure_paths() {
 # Function to configure etc backup
 configure_etc() {
     log_info "Configuring /etc backup..."
-    
+
     local current_etc=$(yq eval '.backups.etc' "$CONFIG_FILE")
-    
+
     if [[ "$current_etc" == "false" ]]; then
         if ask_yes_no "Do you want to backup /etc?"; then
             yq eval '.backups.etc = true' -i "$CONFIG_FILE"
@@ -635,24 +783,24 @@ configure_etc() {
 # Function to configure notifications
 configure_notifications() {
     log_info "Configuring notifications..."
-    
+
     local current_notifications=$(yq eval '.notifications' "$CONFIG_FILE")
-    
+
     if [[ "$current_notifications" == "false" ]]; then
         if ask_yes_no "Do you want to enable Telegram notifications?"; then
             yq eval '.notifications = true' -i "$CONFIG_FILE"
-            
+
             echo
             log_info "Configuring Telegram bot..."
             read -p "Telegram bot token: " bot_token
             read -p "Telegram chat ID: " chat_id
-            
+
             # Create .env file
-            cat > "$ENV_FILE" <<EOF
+            cat >"$ENV_FILE" <<EOF
 TELEGRAM_BOT_TOKEN=$bot_token
 TELEGRAM_CHAT_ID=$chat_id
 EOF
-            
+
             chmod 600 "$ENV_FILE"
             log_success "Telegram notifications configured"
         fi
@@ -672,36 +820,36 @@ display_config() {
 # Function to download scripts
 download_scripts() {
     log_info "Downloading scripts from repository..."
-    
+
     # Create install directory
     mkdir -p "$INSTALL_DIR"
-    
+
     # Download main script
     local repo_url="https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main"
-    
-    curl -Ls "$repo_url/backup.sh" -o "$INSTALL_DIR/$SCRIPT_NAME"
+
+    curl -Ls "$repo_url/btrfs-backup-debian-script.sh" -o "$INSTALL_DIR/$SCRIPT_NAME"
     curl -Ls "$repo_url/README.md" -o "$INSTALL_DIR/README.md"
     curl -Ls "$repo_url/LICENSE" -o "$INSTALL_DIR/LICENSE"
-    
+
     # Make script executable
     chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
-    
+
     # Create symlink
     ln -sf "$INSTALL_DIR/$SCRIPT_NAME" "/usr/local/bin/$SERVICE_NAME.sh"
-    
+
     log_success "Scripts downloaded and configured"
 }
 
 # Function to configure logging
 configure_logging() {
     log_info "Configuring logging system..."
-    
+
     # Create log file
     touch "$LOG_FILE"
-    
+
     # Configure logrotate
     log_info "Configuring log rotation..."
-    cat > "/etc/logrotate.d/$SERVICE_NAME" <<EOF
+    cat >"/etc/logrotate.d/$SERVICE_NAME" <<EOF
 $LOG_FILE {
     daily
     missingok
@@ -712,16 +860,16 @@ $LOG_FILE {
     create 644 root root
 }
 EOF
-    
+
     log_success "Logging system configured"
 }
 
 # Function to create systemd service and timer
 create_systemd_service() {
     log_info "Creating systemd service and timer..."
-    
+
     # Create service file
-    cat > "/etc/systemd/system/$SERVICE_NAME.service" <<EOF
+    cat >"/etc/systemd/system/$SERVICE_NAME.service" <<EOF
 [Unit]
 Description=BTRFS Backup Service for $(hostname)
 After=network.target postgresql.service docker.service
@@ -737,7 +885,7 @@ TimeoutStartSec=7200
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=-$ENV_FILE
 EOF
-    
+
     # Ask for cron expression
     echo
     log_info "Configuring backup schedule..."
@@ -746,12 +894,12 @@ EOF
     echo "  *-*-* 02:30:00    - Every day at 2:30 AM"
     echo "  Sun *-*-* 03:00:00 - Every Sunday at 3:00 AM"
     echo
-    
+
     read -p "Time expression for backup [*-*-* 04:00:00]: " cron_expression
     cron_expression=${cron_expression:-"*-*-* 04:00:00"}
-    
+
     # Create timer file
-    cat > "/etc/systemd/system/$SERVICE_NAME.timer" <<EOF
+    cat >"/etc/systemd/system/$SERVICE_NAME.timer" <<EOF
 [Unit]
 Description=Run $SERVICE_NAME.service at scheduled time
 Requires=$SERVICE_NAME.service
@@ -764,12 +912,12 @@ RandomizedDelaySec=300
 [Install]
 WantedBy=timers.target
 EOF
-    
+
     # Reload systemd and enable timer
     systemctl daemon-reload
     systemctl enable "$SERVICE_NAME.timer"
     systemctl start "$SERVICE_NAME.timer"
-    
+
     log_success "Service and timer created and enabled"
     log_info "Timer scheduled for: $cron_expression"
 }
@@ -778,7 +926,7 @@ EOF
 run_initial_backup() {
     if ask_yes_no "Do you want to run an initial backup now?"; then
         log_info "Running initial backup..."
-        
+
         if "/usr/local/bin/$SERVICE_NAME.sh"; then
             log_success "Initial backup completed"
         else
@@ -790,13 +938,13 @@ run_initial_backup() {
 # Function to unmount disks
 unmount_disks() {
     log_info "Unmounting disks..."
-    
+
     local parts_count=$(yq eval '.parts | length' "$CONFIG_FILE")
-    
-    for ((i=0; i<parts_count; i++)); do
+
+    for ((i = 0; i < parts_count; i++)); do
         local path=$(yq eval ".parts[$i].path" "$CONFIG_FILE")
         local label=$(yq eval ".parts[$i].label" "$CONFIG_FILE")
-        
+
         if mountpoint -q "$path"; then
             log_info "Unmounting $label ($path)..."
             umount "$path" || log_warning "Could not unmount $path"
@@ -827,59 +975,61 @@ show_final_status() {
 # Main function
 main() {
     log_info "Starting BTRFS Backup installation..."
-    
+
     # Check if running as root
     check_root
-    
+
     # Step 1: Check dependencies
     check_dependencies
-    
+
     # Step 2: Initialize configuration
     init_config
-    
+
     # Step 3: Configure backup parts (disks)
     configure_parts
-    
+
     # Step 4: Mount and verify disks
     mount_and_verify_disks
-    
+
     # Step 5: Configure retention policy
     configure_policy
-    
+
     # Step 6: Configure infrastructure
     configure_postgresql_infrastructure
     configure_nginx_infrastructure
-    
+    configure_redis_infrastructure
+    configure_meilisearch_infrastructure
+
     # Step 7: Configure services
     configure_services
-    
+
     # Step 8: Configure path backups
     configure_paths
-    
+
     # Step 9: Configure /etc backup
     configure_etc
-    
+
     # Step 10: Configure notifications
     configure_notifications
-    
+
     # Step 11: Display final configuration
     display_config
-    
+
     # Step 12: Download scripts
     download_scripts
-    
+
     # Step 13: Configure logging
     configure_logging
-    
+
     # Step 14: Create systemd service and timer
     create_systemd_service
-    
+
     # Step 15: Run initial backup
     run_initial_backup
-    
+
     # Step 16: Unmount disks
     unmount_disks
-    
+
     # Show final status
     show_final_status
 }

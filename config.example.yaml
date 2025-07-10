@@ -6,14 +6,14 @@ parts:
   - label: backup_2
     dev: /dev/sdd1
     path: /mnt/backups/disk_2
-    
+
 notifications: true
-  
+
 policy:
   daily_retention: 3
   weekly_retention: 2
   monthly_retention: 3
-  
+
 backups:
   infrastructure:
     postgresql:
@@ -22,7 +22,7 @@ backups:
       config: true # /etc/postgresql
     nginx:
       config: true # /etc/nginx
-      certificates: true # certificates that used in sited-available
+      certificates: true # certificates that are used in sites-available
     redis:
       config: true # /etc/redis
     meilisearch:
@@ -39,12 +39,12 @@ backups:
         compose: /opt/gitea # not mandatory (copy .yaml and *.env.* files)
       config: /etc/gitea # not mandatory
       data:
-       files: /var/lib/gitea # not mandatory
-       pg-db: giteadb
-      logs: /var/log/gitea  # not mandatory
-      
+        files: /var/lib/gitea # not mandatory
+        pg-db: giteadb
+      logs: /var/log/gitea # not mandatory
+
     - label: linkwarden
-      systemd: 
+      systemd:
         name: podman-compose@linkwarden
         podman:
           user: admin
@@ -52,11 +52,11 @@ backups:
       containers:
         compose: /opt/linkwarden
       data:
-       files: /var/lib/linkwarden
-       pg-db: linkwardendb
-    
+        files: /var/lib/linkwarden
+        pg-db: linkwardendb
+
     - label: opencloud
-      systemd: 
+      systemd:
         name: opencloud
       config: /etc/opencloud
       data:
@@ -64,6 +64,6 @@ backups:
   paths:
     - label: user_fotos
       path: /home/user/fotos
-    - label: history 
+    - label: history
       path: /srv/history/
-  etc: true # exclude folders from services if config start with /etc/ and infrastructure configs
+  etc: true # backup /etc directory; skips service configs under /etc/ to avoid duplication
