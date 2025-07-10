@@ -14,6 +14,12 @@
    <p>A comprehensive backup solution for Debian-based systems using BTRFS snapshots. This script provides automated backups of PostgreSQL databases, system configurations, application data, SSL certificates, and service configurations with intelligent retention policies.</p>
 </div>
 
+## **Install & Upgrade**
+
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main/install.sh)"
+```
+
 ## **Features**
 
 - 🔄 **Automated BTRFS Snapshots** - Daily, weekly, and monthly snapshots with configurable retention
@@ -44,14 +50,7 @@
 - `rsync` - File synchronization
 - `postgresql-client` (optional, for PostgreSQL backups)
 
-## **Install & Upgrade**
-
-### **Quick Installation**
-```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main/install.sh)"
-```
-
-### **Manual Installation**
+## **Manual Installation**
 ```bash
 # Download the installer
 wget https://raw.githubusercontent.com/StafLoker/btrfs-backup-debian-script/main/install.sh
